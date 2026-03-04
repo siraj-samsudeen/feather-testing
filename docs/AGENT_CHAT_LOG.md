@@ -1,4 +1,4 @@
-# feather-testing — Project Dialogue
+# feather-testing-core — Project Dialogue
 
 ## Origin: "Can we make JS tests look like Phoenix Test?" (2025-02-20)
 
@@ -74,22 +74,22 @@ Chose **standalone** because the DSL has nothing to do with Convex. Non-Convex a
 ## Decision: Package naming
 
 **Q: `feather-test` vs `feather-testing` vs `feather-flow`?**
-A: **`feather-testing`** — matches the hierarchy: `feather-testing` is generic, `feather-testing-convex` extends it for Convex, future `feather-testing-instantdb` for InstantDB, etc.
+A: Originally chose `feather-testing`. Later renamed to **`feather-testing-core`** to clarify the relationship: `feather-testing-core` is the foundational DSL, `feather-testing-convex` extends it for Convex, future `feather-testing-instantdb` for InstantDB, etc.
 
 ## Milestone: Package extracted and verified
 
-Created `NonDropBoxProjects/feather-testing/` with:
+Created `NonDropBoxProjects/feather-testing/` (package: `feather-testing-core`) with:
 - `src/` — core (session, types, errors) + playwright/ + rtl/ adapters
 - Three subpath exports: `.`, `./playwright`, `./rtl`
 - `tsc` build, 6.4 kB packed, zero runtime deps
 
 Hit dual-Playwright-load error when using `npm install ../feather-testing` (symlink). Fixed by using `npm pack` + tarball install. Updated `feather-testing-trial` imports from local files to package imports.
 
-**Final: all 8 tests pass** (7 vitest + 1 playwright) importing from the `feather-testing` package.
+**Final: all 8 tests pass** (7 vitest + 1 playwright) importing from the `feather-testing-core` package.
 
 ## Next: Wrap in feather-testing-convex
 
-Decided that `feather-testing-convex` should depend on and wrap `feather-testing` to provide batteries-included Convex testing. New exports planned:
+Decided that `feather-testing-convex` should depend on and wrap `feather-testing-core` to provide batteries-included Convex testing. New exports planned:
 - `feather-testing-convex/playwright` — session fixture with auto Convex cleanup
 - `feather-testing-convex/rtl` — `renderWithSession()` combining render + session creation
 

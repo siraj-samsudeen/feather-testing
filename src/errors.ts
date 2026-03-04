@@ -23,7 +23,7 @@ export class StepError extends Error {
       .join("\n");
 
     super(
-      `feather-testing: Step ${failedStep.index + 1} of ${allSteps.length} failed\n\n` +
+      `feather-testing-core: Step ${failedStep.index + 1} of ${allSteps.length} failed\n\n` +
         `Failed at: ${failedStep.name}\n` +
         `Cause: ${causeMessage}\n\n` +
         `Chain:\n${stepList}\n`,

@@ -1,4 +1,4 @@
-# feather-testing
+# feather-testing-core
 
 Part of the [Feather Framework](https://github.com/siraj-samsudeen/feather-framework) ecosystem.
 
@@ -20,7 +20,7 @@ Inspired by [Phoenix Test](https://hexdocs.pm/phoenix_test/PhoenixTest.html) —
 ## Installation
 
 ```bash
-npm install feather-testing
+npm install feather-testing-core
 ```
 
 All test framework dependencies are optional peers — install only what you use:
@@ -39,7 +39,7 @@ npm install @testing-library/react @testing-library/user-event
 
 ```ts
 // e2e/fixtures.ts
-import { test as featherTest } from "feather-testing/playwright";
+import { test as featherTest } from "feather-testing-core/playwright";
 export const test = featherTest;
 export { expect } from "@playwright/test";
 ```
@@ -76,7 +76,7 @@ test("full auth lifecycle", async ({ session }) => {
 ### React Testing Library
 
 ```ts
-import { createSession } from "feather-testing/rtl";
+import { createSession } from "feather-testing-core/rtl";
 
 test("form submission", async () => {
   render(<App />);
@@ -185,7 +185,7 @@ test("authenticated flow", async ({ session }) => {
 When a step fails, `StepError` shows the full chain with status markers:
 
 ```
-feather-testing: Step 4 of 6 failed
+feather-testing-core: Step 4 of 6 failed
 
 Failed at: clickButton('Sign up')
 Cause: locator.click: getByRole('button', { name: 'Sign up' }) resolved to 0 elements
@@ -211,13 +211,13 @@ The RTL adapter runs in JSDOM, which has no real browser. These methods are not 
 
 ```ts
 // Core types (for building custom drivers)
-import { Session, StepError, type TestDriver } from "feather-testing";
+import { Session, StepError, type TestDriver } from "feather-testing-core";
 
 // Playwright adapter
-import { test, createSession, expect } from "feather-testing/playwright";
+import { test, createSession, expect } from "feather-testing-core/playwright";
 
 // RTL adapter
-import { createSession } from "feather-testing/rtl";
+import { createSession } from "feather-testing-core/rtl";
 ```
 
 ## License

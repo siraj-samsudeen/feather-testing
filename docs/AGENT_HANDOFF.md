@@ -1,4 +1,4 @@
-# Handoff: feather-testing — Phoenix Test-inspired Fluent DSL
+# Handoff: feather-testing-core — Phoenix Test-inspired Fluent DSL
 
 **Date:** 2025-02-20
 **Session scope:** Design, prototype, and package a fluent testing DSL inspired by Elixir's Phoenix Test
@@ -7,21 +7,21 @@
 
 ## What Was Built
 
-A standalone npm package `feather-testing` that provides a chainable, Phoenix Test-style DSL for writing readable browser tests in JS/TS.
+A standalone npm package `feather-testing-core` that provides a chainable, Phoenix Test-style DSL for writing readable browser tests in JS/TS.
 
 ### Three subpath exports
 
 | Export | Purpose | Peer deps |
 |--------|---------|-----------|
-| `feather-testing` | Core: Session, TestDriver interface, StepError | None |
-| `feather-testing/playwright` | Playwright adapter + fixture | `@playwright/test` |
-| `feather-testing/rtl` | React Testing Library adapter (subset API) | `@testing-library/react`, `@testing-library/user-event` |
+| `feather-testing-core` | Core: Session, TestDriver interface, StepError | None |
+| `feather-testing-core/playwright` | Playwright adapter + fixture | `@playwright/test` |
+| `feather-testing-core/rtl` | React Testing Library adapter (subset API) | `@testing-library/react`, `@testing-library/user-event` |
 
 ### What tests look like now
 
 **Playwright E2E:**
 ```ts
-import { test } from "./fixtures"; // extends feather-testing/playwright
+import { test } from "./fixtures"; // extends feather-testing-core/playwright
 
 test("signup flow", async ({ session }) => {
   await session
@@ -37,7 +37,7 @@ test("signup flow", async ({ session }) => {
 
 **RTL integration:**
 ```ts
-import { createSession } from "feather-testing/rtl";
+import { createSession } from "feather-testing-core/rtl";
 
 test("form submission", async () => {
   renderApp({ authenticated: false });
@@ -64,7 +64,7 @@ Session (thenable action-queue, framework-agnostic)
 
 **Core pattern:** Each Session method pushes a thunk onto an internal queue and returns `this`. The class implements `PromiseLike<void>` via a `then()` method, so `await session.visit("/").fillIn(...)` executes the entire chain. This is the same pattern used by [playwright-fluent](https://github.com/hdorgeval/playwright-fluent).
 
-**Key files in `feather-testing/src/`:**
+**Key files in `feather-testing-core/src/`:**
 
 | File | What it does |
 |------|-------------|
@@ -133,7 +133,7 @@ RTL tests run in JSDOM, which has no real URL or browser navigation. Rather than
 
 ### Standalone package, not inside convex-test-provider
 
-`feather-testing` is framework-agnostic — nothing about it is Convex-specific. Bundling it with `convex-test-provider` would limit reach and muddy purpose. Non-Convex apps can use `feather-testing` directly.
+`feather-testing-core` is framework-agnostic — nothing about it is Convex-specific. Bundling it with `convex-test-provider` would limit reach and muddy purpose. Non-Convex apps can use `feather-testing-core` directly.
 
 ---
 
@@ -179,7 +179,7 @@ RTL tests run in JSDOM, which has no real URL or browser navigation. Rather than
 
 | Path | What |
 |------|------|
-| `NonDropBoxProjects/feather-testing/` | The standalone package (source of truth) |
+| `NonDropBoxProjects/feather-testing/` | The standalone core package (source of truth, npm: `feather-testing-core`) |
 | `NonDropBoxProjects/feather-testing-trial/` | Copy of starter-pack using the package (test bed) |
 | `NonDropBoxProjects/feather-testing-convex/` | Existing Convex test provider (not yet modified) |
 | `NonDropBoxProjects/_archive/benchmark/starter-pack/` | Original starter-pack (untouched) |
@@ -188,12 +188,12 @@ RTL tests run in JSDOM, which has no real URL or browser navigation. Rather than
 
 `feather-testing-trial` installs `feather-testing` via tarball:
 ```json
-"feather-testing": "file:feather-testing-0.1.0.tgz"
+"feather-testing-core": "file:feather-testing-core-0.1.0.tgz"
 ```
 To update after changes to `feather-testing`:
 ```bash
 cd feather-testing && npm run build && npm pack
-cd ../feather-testing-trial && npm install ../feather-testing/feather-testing-0.1.0.tgz
+cd ../feather-testing-trial && npm install ../feather-testing/feather-testing-core-0.1.0.tgz
 ```
 
 ---
@@ -202,7 +202,7 @@ cd ../feather-testing-trial && npm install ../feather-testing/feather-testing-0.
 
 ### Goal
 
-Make `feather-testing-convex` the batteries-included testing package for Convex apps. Users install one package and get both the Convex mock layer AND the fluent DSL.
+Make `feather-testing-convex` the batteries-included testing package for Convex apps. Users install one package and get both the Convex mock layer AND the fluent DSL from `feather-testing-core`.
 
 ### New exports to add to feather-testing-convex
 
@@ -217,7 +217,7 @@ export const test = createConvexTest({
 });
 ```
 
-Under the hood, this extends `feather-testing/playwright`'s test fixture with auto-cleanup.
+Under the hood, this extends `feather-testing-core/playwright`'s test fixture with auto-cleanup.
 
 **`feather-testing-convex/rtl`** — Combined render + session:
 ```ts
@@ -231,7 +231,7 @@ Combines `renderWithConvexAuth` + `createSession()` into one call.
 
 ### Implementation plan
 
-1. Add `feather-testing` as a dependency of `feather-testing-convex`
+1. Add `feather-testing-core` as a dependency of `feather-testing-convex`
 2. Add new subpath exports: `feather-testing-convex/playwright`, `feather-testing-convex/rtl`
 3. The existing exports (`.`, `./vitest-plugin`) remain unchanged
 4. Update `feather-testing-trial` to use `feather-testing-convex` instead of importing both packages separately
@@ -248,7 +248,7 @@ The `createConvexTest` for Playwright needs the Convex API reference and URL. Ho
 
 ```
 feather-testing-convex
-  ├── feather-testing (dependency)
+  ├── feather-testing-core (dependency)
   ├── convex-test (peer dep)
   ├── @playwright/test (optional peer dep)
   └── @testing-library/* (optional peer dep)
