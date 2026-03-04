@@ -23,6 +23,8 @@ Inspired by [Phoenix Test](https://hexdocs.pm/phoenix_test/PhoenixTest.html) —
 npm install feather-testing-core
 ```
 
+> **Note:** This package is ESM-only (`"type": "module"`). It works with modern bundlers and test runners out of the box. If your project uses CommonJS `require()`, you'll need to update your config to support ESM imports.
+
 All test framework dependencies are optional peers — install only what you use:
 
 ```bash
@@ -111,15 +113,65 @@ Every method returns `this` for chaining. A single `await` at the start of the c
 | `selectOption(label, option)` | Select dropdown option by label |
 | `check(label)` / `uncheck(label)` | Toggle checkbox by label |
 | `choose(label)` | Select radio button by label |
-| `submit()` | Submit the most recently interacted form |
+| `submit()` | Submit the most recently interacted form (see below) |
+
+#### How `submit()` finds the submit button
+
+`submit()` tracks the `<form>` element from the last `fillIn`, `selectOption`, `check`, `uncheck`, or `choose` call, then uses this strategy:
+
+1. **By accessible name** — looks for a `<button>` whose name contains "submit" (case-insensitive)
+2. **By `type="submit"`** — looks for `<button type="submit">` or `<input type="submit">`
+3. **Enter key fallback** — presses Enter on the last form field
+
+If no form was previously interacted with, `submit()` throws an error.
 
 ### Assertions
 
 | Method | Description |
 |--------|-------------|
 | `assertText(text)` / `refuteText(text)` | Assert text is visible / not visible |
-| `assertHas(selector, opts?)` / `refuteHas(...)` | Assert element exists (Playwright only) |
-| `assertPath(path, opts?)` / `refutePath(path)` | Assert URL path (Playwright only) |
+| `assertHas(selector, opts?)` / `refuteHas(...)` | Assert element exists (Playwright only, see options below) |
+| `assertPath(path, opts?)` / `refutePath(path)` | Assert URL path (Playwright only, see options below) |
+
+#### `assertHas` / `refuteHas` options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `text` | `string` | Filter elements to those containing this text |
+| `count` | `number` | Assert exact number of matching elements |
+| `exact` | `boolean` | When `true`, `text` matches as an exact substring. When `false` (default), matches as a regex |
+| `timeout` | `number` | Custom timeout in milliseconds (overrides Playwright default) |
+
+```ts
+// Assert at least one .card element is visible
+await session.assertHas(".card");
+
+// Assert a .card containing specific text
+await session.assertHas(".card", { text: "Overdue" });
+
+// Assert exact count
+await session.assertHas("li.todo-item", { count: 3 });
+
+// Assert with custom timeout
+await session.assertHas(".loaded", { timeout: 10000 });
+
+// Refute: assert no matching elements exist
+await session.refuteHas(".spinner");
+await session.refuteHas(".card", { text: "Deleted Item" });
+```
+
+#### `assertPath` / `refutePath` options
+
+```ts
+// Assert path (ignores query params)
+await session.assertPath("/projects");
+
+// Assert path with specific query params
+await session.assertPath("/search", { queryParams: { q: "hello", page: "1" } });
+
+// Refute: assert you are NOT on this path
+await session.refutePath("/login");
+```
 
 ### Scoping
 
@@ -127,11 +179,21 @@ Every method returns `this` for chaining. A single `await` at the start of the c
 |--------|-------------|
 | `within(selector, fn)` | Scope actions to a container element |
 
+```ts
+// All actions inside the callback are scoped to the matched element
+await session
+  .visit("/dashboard")
+  .within(".sidebar", (s) =>
+    s.clickLink("Settings").assertText("Preferences")
+  )
+  .assertText("Dashboard"); // back to full-page scope after within()
+```
+
 ### Debug
 
 | Method | Description |
 |--------|-------------|
-| `debug()` | Screenshot (Playwright) or log DOM (RTL) |
+| `debug()` | Playwright: saves a full-page screenshot to `debug-{timestamp}.png` in the CWD. RTL: calls `screen.debug()` to log the current DOM to the console. |
 
 ## How It Works
 
@@ -210,7 +272,7 @@ The RTL adapter runs in JSDOM, which has no real browser. These methods are not 
 ## Exports
 
 ```ts
-// Core types (for building custom drivers)
+// Core (Session class + types)
 import { Session, StepError, type TestDriver } from "feather-testing-core";
 
 // Playwright adapter
@@ -218,6 +280,13 @@ import { test, createSession, expect } from "feather-testing-core/playwright";
 
 // RTL adapter
 import { createSession } from "feather-testing-core/rtl";
+```
+
+Both adapter subpaths also re-export `Session` and `StepError`, so you can import everything from a single path:
+
+```ts
+import { test, Session, StepError } from "feather-testing-core/playwright";
+import { createSession, Session, StepError } from "feather-testing-core/rtl";
 ```
 
 ## License

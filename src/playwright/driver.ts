@@ -74,12 +74,22 @@ export class PlaywrightDriver implements TestDriver {
           "Use fillIn(), selectOption(), check(), uncheck(), or choose() first.",
       );
     }
+    // First try: find a button by accessible name containing "submit"
+    const byRole = this.lastFormLocator.getByRole("button", {
+      name: /submit/i,
+    });
+    if ((await byRole.count()) > 0) {
+      await byRole.first().click();
+      return;
+    }
+    // Second try: find an explicit type="submit" element
     const submitBtn = this.lastFormLocator.locator(
       'button[type="submit"], input[type="submit"]',
     );
     if ((await submitBtn.count()) > 0) {
       await submitBtn.first().click();
     } else {
+      // Last resort: press Enter on the last form field
       await this.lastFormLocator
         .locator("input, textarea, select")
         .last()
@@ -106,7 +116,9 @@ export class PlaywrightDriver implements TestDriver {
   async refuteHas(selector: string, opts?: AssertHasOptions): Promise<void> {
     let locator = this.scope.locator(selector);
     if (opts?.text) {
-      locator = locator.filter({ hasText: opts.text });
+      locator = opts.exact
+        ? locator.filter({ hasText: opts.text })
+        : locator.filter({ hasText: new RegExp(opts.text) });
     }
     await expect(locator).toHaveCount(0, { timeout: opts?.timeout });
   }
@@ -132,10 +144,10 @@ export class PlaywrightDriver implements TestDriver {
   }
 
   async refutePath(path: string): Promise<void> {
-    const url = new URL(this.page.url());
-    if (url.pathname === path) {
-      throw new Error(`Expected path to NOT be '${path}', but it is.`);
-    }
+    const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    await expect(this.page).not.toHaveURL(
+      new RegExp(`^[^?]*${escaped}(\\?.*)?$`),
+    );
   }
 
   async within(selector: string): Promise<TestDriver> {

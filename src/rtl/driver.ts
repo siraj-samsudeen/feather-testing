@@ -1,4 +1,4 @@
-import { screen, within as rtlWithin } from "@testing-library/react";
+import { screen, waitFor, within as rtlWithin } from "@testing-library/react";
 import userEvent, { type UserEvent } from "@testing-library/user-event";
 import type { AssertHasOptions, TestDriver } from "../types.js";
 
@@ -51,7 +51,15 @@ export class RTLDriver implements TestDriver {
 
   async selectOption(label: string, option: string): Promise<void> {
     const select = await this.container.findByLabelText(label);
-    await this.user.selectOptions(select, option);
+    const optionEl = Array.from(
+      (select as HTMLSelectElement).querySelectorAll("option"),
+    ).find((o) => o.textContent?.trim() === option);
+    if (!optionEl) {
+      throw new Error(
+        `selectOption('${label}', '${option}'): no <option> with text '${option}' found.`,
+      );
+    }
+    await this.user.selectOptions(select, optionEl);
     this.lastFormElement = select.closest("form");
   }
 
@@ -120,12 +128,14 @@ export class RTLDriver implements TestDriver {
   }
 
   async refuteText(text: string): Promise<void> {
-    const el = this.container.queryByText(text);
-    if (el) {
-      throw new Error(
-        `Expected NOT to find text '${text}', but it was present.`,
-      );
-    }
+    await waitFor(() => {
+      const el = this.container.queryByText(text);
+      if (el) {
+        throw new Error(
+          `Expected NOT to find text '${text}', but it was present.`,
+        );
+      }
+    });
   }
 
   async assertPath(): Promise<void> {
