@@ -169,24 +169,73 @@ Every method returns `this` for chaining. A single `await` at the start of the c
 | `check(label)` / `uncheck(label)` | Toggle checkbox by label |
 | `choose(label)` | Select radio button by label |
 | `submit()` | Submit the most recently interacted form (see below) |
+| `upload(label, path)` | Set a file input (found by label) to the file at `path` |
+| `dropFile(selector, path)` | Dispatch a `DataTransfer` drop of the file onto a drop area |
 
 #### How `submit()` finds the submit button
 
 `submit()` tracks the `<form>` element from the last `fillIn`, `selectOption`, `check`, `uncheck`, or `choose` call, then uses this strategy:
 
-1. **By accessible name** — looks for a `<button>` whose name contains "submit" (case-insensitive)
-2. **By `type="submit"`** — looks for `<button type="submit">` or `<input type="submit">`
+1. **By `type="submit"`** — looks for `<button type="submit">` or `<input type="submit">` (the DOM's ground truth)
+2. **By accessible name** — looks for a `<button>` whose name contains "submit" (case-insensitive)
 3. **Enter key fallback** — presses Enter on the last form field
 
 If no form was previously interacted with, `submit()` throws an error.
+
+#### File uploads
+
+```ts
+// Standard file input, found by its label
+await session.upload("Avatar", "fixtures/avatar.png");
+
+// Custom drop area (drag-and-drop upload zones)
+await session.dropFile("#dropzone", "fixtures/report.pdf");
+```
+
+In Playwright, `dropFile` reads the real file and dispatches a `drop` event with a `DataTransfer`. In RTL (JSDOM has no filesystem), both verbs synthesize an empty `File` named after the path's basename — assert on the file name, not its contents.
 
 ### Assertions
 
 | Method | Description |
 |--------|-------------|
 | `assertText(text)` / `refuteText(text)` | Assert text is visible / not visible |
+| `assertValue(label, value)` | Assert a field (by label or placeholder) has this value |
+| `assertChecked(label)` / `refuteChecked(label)` | Assert a checkbox is checked / not checked |
+| `assertSelected(label, optionLabel)` | Assert the select's currently selected option |
+| `assertOptions(label, [labels])` | Assert a select offers exactly these options, in order |
 | `assertHas(selector, opts?)` / `refuteHas(...)` | Assert element exists (Playwright only, see options below) |
 | `assertPath(path, opts?)` / `refutePath(path)` | Assert URL path (Playwright only, see options below) |
+
+#### Form-state assertions
+
+```ts
+await session
+  .fillIn("Email", "a@b.com")
+  .assertValue("Email", "a@b.com")
+  .check("Subscribe")
+  .assertChecked("Subscribe")
+  .refuteChecked("Receive ads")
+  .selectOption("Plan", "Pro")
+  .assertSelected("Plan", "Pro")
+  .assertOptions("Plan", ["Free", "Pro", "Enterprise"]);
+```
+
+In Playwright these are backed by `toHaveValue` / `toBeChecked` / `toHaveText`, so they auto-retry. The RTL adapter polls the DOM with `waitFor` for the same retry semantics.
+
+#### Pair every refute with a positive assertion
+
+`refuteText` / `refuteHas` assert *absence* — and absence also holds when the page failed to render at all. A blank page passes `refuteHas(".delete-button")`. Always pair a refute with a positive assertion on the same region so the test proves the page actually rendered:
+
+```ts
+// ❌ Passes even if the action bar never rendered
+await session.refuteHas(".action-bar button", { text: "Delete" });
+
+// ✅ The positive complement proves the action bar rendered with exactly [Import]
+await session
+  .assertHas(".action-bar button", { count: 1 })
+  .assertHas(".action-bar button", { text: "Import" })
+  .refuteHas(".action-bar button", { text: "Delete" });
+```
 
 #### `assertHas` / `refuteHas` options
 
@@ -217,6 +266,8 @@ await session.refuteHas(".card", { text: "Deleted Item" });
 
 #### `assertPath` / `refutePath` options
 
+The path is compared against the URL's parsed `pathname` exactly — `assertPath("/import")` does **not** pass on `/re/import`.
+
 ```ts
 // Assert path (ignores query params)
 await session.assertPath("/projects");
@@ -242,6 +293,19 @@ await session
     s.clickLink("Settings").assertText("Preferences")
   )
   .assertText("Dashboard"); // back to full-page scope after within()
+```
+
+### Escape hatch: `step(name, fn)`
+
+When you need something the DSL doesn't cover, queue a named custom step instead of abandoning the chain. The callback receives the adapter's context — `{ page, scope }` for Playwright, `{ user, container }` for RTL — and the name shows up in `StepError` output like any built-in step:
+
+```ts
+await session
+  .visit("/board")
+  .step("drag card to Done column", async ({ page }) => {
+    await page.getByText("My card").dragTo(page.locator("#done"));
+  })
+  .assertText("Done (1)");
 ```
 
 ### Debug
@@ -315,6 +379,10 @@ Chain:
     [skipped] fillIn('Password', 'password123')
     [skipped] assertText('Hello! You are signed in.')
 ```
+
+The session keeps a history of executed steps, so when you break a flow into multiple chains (multiple `await`s), the `StepError` still shows the full walk — steps from earlier chains appear as `[ok]` above the failing chain.
+
+With the Playwright adapter, each queued step is also wrapped in `test.step()`, so chains appear as named steps in the trace viewer and HTML report.
 
 ## RTL Adapter Limitations
 

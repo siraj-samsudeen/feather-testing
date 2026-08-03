@@ -163,6 +163,57 @@ function SubmitFallbackApp() {
   );
 }
 
+function SubmitPrecedenceApp() {
+  const [result, setResult] = useState("");
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        setResult("Saved!");
+      }}
+    >
+      <label htmlFor="val">Value</label>
+      <input id="val" name="val" />
+      <button type="button" onClick={() => setResult("Wrong button!")}>
+        Submit other
+      </button>
+      <button type="submit">Save</button>
+      {result && <p>{result}</p>}
+    </form>
+  );
+}
+
+function UploadApp() {
+  const [uploaded, setUploaded] = useState("");
+  const [dropped, setDropped] = useState("");
+  return (
+    <div>
+      <form>
+        <label htmlFor="avatar">Avatar</label>
+        <input
+          id="avatar"
+          name="avatar"
+          type="file"
+          onChange={(e) => setUploaded(e.target.files?.[0]?.name ?? "")}
+        />
+      </form>
+      <div
+        data-testid="dropzone"
+        className="dropzone"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDropped(e.dataTransfer.files[0]?.name ?? "");
+        }}
+      >
+        Drop files here
+      </div>
+      {uploaded && <p>Uploaded: {uploaded}</p>}
+      {dropped && <p>Dropped: {dropped}</p>}
+    </div>
+  );
+}
+
 function DisappearingApp() {
   const [visible, setVisible] = useState(true);
   return (
@@ -337,6 +388,144 @@ describe("RTLDriver", () => {
       await expect(driver.submit()).rejects.toThrow(
         "submit() called but no form was previously interacted with",
       );
+    });
+
+    it("prefers type='submit' over accessible name containing 'submit'", async () => {
+      render(<SubmitPrecedenceApp />);
+      const driver = new RTLDriver();
+      await driver.fillIn("Value", "test");
+      await driver.submit();
+      expect(screen.getByText("Saved!")).toBeTruthy();
+    });
+  });
+
+  describe("upload()", () => {
+    it("uploads a file to a file input by label", async () => {
+      render(<UploadApp />);
+      const driver = new RTLDriver();
+      await driver.upload("Avatar", "/some/dir/photo.png");
+      expect(screen.getByText("Uploaded: photo.png")).toBeTruthy();
+    });
+  });
+
+  describe("dropFile()", () => {
+    it("dispatches a drop with the file on a selector", async () => {
+      render(<UploadApp />);
+      const driver = new RTLDriver();
+      await driver.dropFile(".dropzone", "/some/dir/report.pdf");
+      expect(screen.getByText("Dropped: report.pdf")).toBeTruthy();
+    });
+
+    it("throws when selector matches nothing", async () => {
+      render(<UploadApp />);
+      const driver = new RTLDriver();
+      await expect(
+        driver.dropFile(".nonexistent", "file.txt"),
+      ).rejects.toThrow("dropFile('.nonexistent'): element not found");
+    });
+  });
+
+  describe("form-state assertions", () => {
+    it("assertValue passes for a filled labeled input", async () => {
+      render(<FormApp />);
+      const driver = new RTLDriver();
+      await driver.fillIn("Name", "Alice");
+      await driver.assertValue("Name", "Alice");
+    });
+
+    it("assertValue works with placeholder fields", async () => {
+      render(<FormApp />);
+      const driver = new RTLDriver();
+      await driver.fillIn("Nickname", "Ali");
+      await driver.assertValue("Nickname", "Ali");
+    });
+
+    it("assertValue fails on wrong value", async () => {
+      render(<FormApp />);
+      const driver = new RTLDriver();
+      await driver.fillIn("Name", "Alice");
+      await expect(driver.assertValue("Name", "Bob")).rejects.toThrow(
+        "expected value 'Bob', but found 'Alice'",
+      );
+    });
+
+    it("assertChecked passes for a checked checkbox", async () => {
+      render(<FormApp />);
+      const driver = new RTLDriver();
+      await driver.assertChecked("Receive ads");
+    });
+
+    it("assertChecked fails for an unchecked checkbox", async () => {
+      render(<FormApp />);
+      const driver = new RTLDriver();
+      await expect(
+        driver.assertChecked("Subscribe to newsletter"),
+      ).rejects.toThrow("expected checkbox to be checked");
+    });
+
+    it("refuteChecked passes for an unchecked checkbox", async () => {
+      render(<FormApp />);
+      const driver = new RTLDriver();
+      await driver.refuteChecked("Subscribe to newsletter");
+    });
+
+    it("refuteChecked fails for a checked checkbox", async () => {
+      render(<FormApp />);
+      const driver = new RTLDriver();
+      await expect(driver.refuteChecked("Receive ads")).rejects.toThrow(
+        "expected checkbox NOT to be checked",
+      );
+    });
+
+    it("assertSelected passes for the selected option label", async () => {
+      render(<FormApp />);
+      const driver = new RTLDriver();
+      await driver.selectOption("Favorite Color", "Blue");
+      await driver.assertSelected("Favorite Color", "Blue");
+    });
+
+    it("assertSelected fails for a non-selected option", async () => {
+      render(<FormApp />);
+      const driver = new RTLDriver();
+      await driver.selectOption("Favorite Color", "Blue");
+      await expect(
+        driver.assertSelected("Favorite Color", "Red"),
+      ).rejects.toThrow("expected selected option 'Red', but found 'Blue'");
+    });
+
+    it("assertOptions passes when the select offers exactly these options", async () => {
+      render(<FormApp />);
+      const driver = new RTLDriver();
+      await driver.assertOptions("Favorite Color", [
+        "--Select--",
+        "Red",
+        "Green",
+        "Blue",
+      ]);
+    });
+
+    it("assertOptions fails when the expectation is incomplete", async () => {
+      render(<FormApp />);
+      const driver = new RTLDriver();
+      await expect(
+        driver.assertOptions("Favorite Color", ["Red", "Green", "Blue"]),
+      ).rejects.toThrow("assertOptions('Favorite Color')");
+    });
+  });
+
+  describe("step()", () => {
+    it("passes the user and container to the callback", async () => {
+      render(<LinksApp />);
+      const driver = new RTLDriver();
+
+      let receivedUser: unknown;
+      await driver.step(async ({ user, container }) => {
+        receivedUser = user;
+        await user.click(await container.findByRole("button", { name: "Action" }));
+      });
+
+      expect(receivedUser).toBeDefined();
+      expect(screen.getByText("Clicked: action")).toBeTruthy();
     });
   });
 

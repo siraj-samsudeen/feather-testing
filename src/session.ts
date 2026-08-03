@@ -6,11 +6,12 @@ import type {
 } from "./types.js";
 import { StepError } from "./errors.js";
 
-export class Session implements PromiseLike<void> {
+export class Session<TContext = unknown> implements PromiseLike<void> {
   private steps: QueuedStep[] = [];
+  private executedSteps: QueuedStep[] = [];
   private stepIndex = 0;
 
-  constructor(private driver: TestDriver) {}
+  constructor(private driver: TestDriver<TContext>) {}
 
   then<TResult1 = void, TResult2 = never>(
     onfulfilled?:
@@ -27,11 +28,21 @@ export class Session implements PromiseLike<void> {
     const steps = [...this.steps];
     this.steps = [];
 
-    for (const step of steps) {
+    const wrap: (name: string, fn: () => Promise<void>) => Promise<void> =
+      this.driver.wrapStep?.bind(this.driver) ?? ((_name, fn) => fn());
+
+    for (const [i, step] of steps.entries()) {
       try {
-        await step.action();
+        await wrap(step.name, step.action);
+        this.executedSteps.push(step);
       } catch (error) {
-        throw new StepError(step, steps, error);
+        // Include steps executed in earlier chains so the full walk is
+        // visible even when the user broke the chain across multiple awaits.
+        throw new StepError(
+          step,
+          [...this.executedSteps, ...steps.slice(i)],
+          error,
+        );
       }
     }
   }
@@ -97,6 +108,18 @@ export class Session implements PromiseLike<void> {
     return this.enqueue("submit()", () => this.driver.submit());
   }
 
+  upload(label: string, path: string): this {
+    return this.enqueue(`upload('${label}', '${path}')`, () =>
+      this.driver.upload(label, path),
+    );
+  }
+
+  dropFile(selector: string, path: string): this {
+    return this.enqueue(`dropFile('${selector}', '${path}')`, () =>
+      this.driver.dropFile(selector, path),
+    );
+  }
+
   // --- Assertions ---
 
   assertText(text: string): this {
@@ -108,6 +131,38 @@ export class Session implements PromiseLike<void> {
   refuteText(text: string): this {
     return this.enqueue(`refuteText('${text}')`, () =>
       this.driver.refuteText(text),
+    );
+  }
+
+  assertValue(label: string, value: string): this {
+    return this.enqueue(`assertValue('${label}', '${value}')`, () =>
+      this.driver.assertValue(label, value),
+    );
+  }
+
+  assertChecked(label: string): this {
+    return this.enqueue(`assertChecked('${label}')`, () =>
+      this.driver.assertChecked(label),
+    );
+  }
+
+  refuteChecked(label: string): this {
+    return this.enqueue(`refuteChecked('${label}')`, () =>
+      this.driver.refuteChecked(label),
+    );
+  }
+
+  assertSelected(label: string, optionLabel: string): this {
+    return this.enqueue(
+      `assertSelected('${label}', '${optionLabel}')`,
+      () => this.driver.assertSelected(label, optionLabel),
+    );
+  }
+
+  assertOptions(label: string, optionLabels: string[]): this {
+    const list = optionLabels.map((l) => `'${l}'`).join(", ");
+    return this.enqueue(`assertOptions('${label}', [${list}])`, () =>
+      this.driver.assertOptions(label, optionLabels),
     );
   }
 
@@ -137,9 +192,24 @@ export class Session implements PromiseLike<void> {
     );
   }
 
+  // --- Escape hatch ---
+
+  /**
+   * Queue a named custom step. `fn` receives the adapter's context
+   * ({ page, scope } for Playwright, { user, container } for RTL), so a
+   * missing verb never forces abandoning the chain. The name shows up in
+   * StepError output like any built-in step.
+   */
+  step(name: string, fn: (context: TContext) => Promise<unknown>): this {
+    return this.enqueue(`step('${name}')`, () => this.driver.step(fn));
+  }
+
   // --- Scoping ---
 
-  within(selector: string, fn: (scoped: Session) => Session): this {
+  within(
+    selector: string,
+    fn: (scoped: Session<TContext>) => Session<TContext>,
+  ): this {
     return this.enqueue(`within('${selector}')`, async () => {
       const scopedDriver = await this.driver.within(selector);
       const scopedSession = new Session(scopedDriver);

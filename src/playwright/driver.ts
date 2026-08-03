@@ -1,11 +1,20 @@
-import { type Page, type Locator, expect } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
+import { type Page, type Locator, expect, test } from "@playwright/test";
 import type {
   AssertHasOptions,
   AssertPathOptions,
   TestDriver,
 } from "../types.js";
 
-export class PlaywrightDriver implements TestDriver {
+/** Context handed to custom step() callbacks in the Playwright adapter. */
+export interface PlaywrightStepContext {
+  page: Page;
+  /** Current scope: the page, or the container locator inside within(). */
+  scope: Page | Locator;
+}
+
+export class PlaywrightDriver implements TestDriver<PlaywrightStepContext> {
   private lastFormLocator: Locator | null = null;
 
   constructor(
@@ -29,18 +38,21 @@ export class PlaywrightDriver implements TestDriver {
     await this.scope.getByRole("button", { name: text }).click();
   }
 
+  private fieldByLabelOrPlaceholder(label: string): Locator {
+    // .or() lets Playwright auto-wait on whichever appears, so
+    // async-rendered labeled fields don't fall through to the
+    // placeholder branch. Placeholder matching is exact — substring
+    // matching would collide with labels ("Name" vs placeholder
+    // "Nickname") and trip strict mode.
+    return this.scope
+      .getByLabel(label)
+      .or(this.scope.getByPlaceholder(label, { exact: true }));
+  }
+
   async fillIn(label: string, value: string): Promise<void> {
-    const byLabel = this.scope.getByLabel(label);
-    if ((await byLabel.count()) > 0) {
-      await byLabel.fill(value);
-      this.lastFormLocator = this.scope.locator("form", { has: byLabel });
-      return;
-    }
-    const byPlaceholder = this.scope.getByPlaceholder(label);
-    await byPlaceholder.fill(value);
-    this.lastFormLocator = this.scope.locator("form", {
-      has: byPlaceholder,
-    });
+    const field = this.fieldByLabelOrPlaceholder(label);
+    await field.fill(value);
+    this.lastFormLocator = this.scope.locator("form", { has: field });
   }
 
   async selectOption(label: string, option: string): Promise<void> {
@@ -74,20 +86,20 @@ export class PlaywrightDriver implements TestDriver {
           "Use fillIn(), selectOption(), check(), uncheck(), or choose() first.",
       );
     }
-    // First try: find a button by accessible name containing "submit"
-    const byRole = this.lastFormLocator.getByRole("button", {
-      name: /submit/i,
-    });
-    if ((await byRole.count()) > 0) {
-      await byRole.first().click();
-      return;
-    }
-    // Second try: find an explicit type="submit" element
+    // First try: an explicit type="submit" element — the DOM's ground truth
     const submitBtn = this.lastFormLocator.locator(
       'button[type="submit"], input[type="submit"]',
     );
     if ((await submitBtn.count()) > 0) {
       await submitBtn.first().click();
+      return;
+    }
+    // Second try: a button whose accessible name contains "submit"
+    const byRole = this.lastFormLocator.getByRole("button", {
+      name: /submit/i,
+    });
+    if ((await byRole.count()) > 0) {
+      await byRole.first().click();
     } else {
       // Last resort: press Enter on the last form field
       await this.lastFormLocator
@@ -95,6 +107,27 @@ export class PlaywrightDriver implements TestDriver {
         .last()
         .press("Enter");
     }
+  }
+
+  async upload(label: string, path: string): Promise<void> {
+    const input = this.scope.getByLabel(label);
+    await input.setInputFiles(path);
+    this.lastFormLocator = this.scope.locator("form", { has: input });
+  }
+
+  async dropFile(selector: string, path: string): Promise<void> {
+    const content = await readFile(path);
+    const name = basename(path);
+    const dataTransfer = await this.page.evaluateHandle(
+      ([fileName, base64]) => {
+        const dt = new DataTransfer();
+        const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+        dt.items.add(new File([bytes], fileName));
+        return dt;
+      },
+      [name, content.toString("base64")] as const,
+    );
+    await this.scope.locator(selector).dispatchEvent("drop", { dataTransfer });
   }
 
   async assertHas(selector: string, opts?: AssertHasOptions): Promise<void> {
@@ -131,26 +164,56 @@ export class PlaywrightDriver implements TestDriver {
     await expect(this.scope.getByText(text)).toHaveCount(0);
   }
 
+  async assertValue(label: string, value: string): Promise<void> {
+    await expect(this.fieldByLabelOrPlaceholder(label)).toHaveValue(value);
+  }
+
+  async assertChecked(label: string): Promise<void> {
+    await expect(this.scope.getByLabel(label)).toBeChecked();
+  }
+
+  async refuteChecked(label: string): Promise<void> {
+    await expect(this.scope.getByLabel(label)).not.toBeChecked();
+  }
+
+  async assertSelected(label: string, optionLabel: string): Promise<void> {
+    const select = this.scope.getByLabel(label);
+    await expect(select.locator("option:checked")).toHaveText(optionLabel);
+  }
+
+  async assertOptions(label: string, optionLabels: string[]): Promise<void> {
+    const select = this.scope.getByLabel(label);
+    await expect(select.locator("option")).toHaveText(optionLabels);
+  }
+
   async assertPath(path: string, opts?: AssertPathOptions): Promise<void> {
     if (opts?.queryParams) {
       const params = new URLSearchParams(opts.queryParams).toString();
       await expect(this.page).toHaveURL(`${path}?${params}`);
     } else {
-      const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      await expect(this.page).toHaveURL(
-        new RegExp(`^[^?]*${escaped}(\\?.*)?$`),
-      );
+      await expect
+        .poll(() => new URL(this.page.url()).pathname, {
+          message: `assertPath('${path}')`,
+        })
+        .toBe(path);
     }
   }
 
   async refutePath(path: string): Promise<void> {
-    const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    await expect(this.page).not.toHaveURL(
-      new RegExp(`^[^?]*${escaped}(\\?.*)?$`),
-    );
+    await expect
+      .poll(() => new URL(this.page.url()).pathname, {
+        message: `refutePath('${path}')`,
+      })
+      .not.toBe(path);
   }
 
-  async within(selector: string): Promise<TestDriver> {
+  async step(
+    fn: (context: PlaywrightStepContext) => Promise<unknown>,
+  ): Promise<void> {
+    await fn({ page: this.page, scope: this.scope });
+  }
+
+  async within(selector: string): Promise<TestDriver<PlaywrightStepContext>> {
     const scopedLocator = this.scope.locator(selector);
     await expect(scopedLocator).toBeAttached();
     return new PlaywrightDriver(this.page, scopedLocator);
@@ -161,5 +224,16 @@ export class PlaywrightDriver implements TestDriver {
       path: `debug-${Date.now()}.png`,
       fullPage: true,
     });
+  }
+
+  async wrapStep(name: string, fn: () => Promise<void>): Promise<void> {
+    try {
+      // Throws when not running inside @playwright/test — fall back to
+      // executing the step directly.
+      test.info();
+    } catch {
+      return fn();
+    }
+    return test.step(name, fn);
   }
 }

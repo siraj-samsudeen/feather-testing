@@ -1,5 +1,7 @@
 import { test, expect } from "./fixtures.js";
 import { PlaywrightDriver } from "../../src/playwright/driver.js";
+import { Session } from "../../src/session.js";
+import { StepError } from "../../src/errors.js";
 import type { TestDriver } from "../../src/types.js";
 
 test.describe("PlaywrightDriver", () => {
@@ -67,6 +69,15 @@ test.describe("PlaywrightDriver", () => {
       await driver.fillIn("Name", "Alice");
       await driver.fillIn("Name", "Bob");
       await expect(page.getByLabel("Name")).toHaveValue("Bob");
+    });
+
+    test("waits for an async-rendered labeled field", async ({ page }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/delayed-field");
+      // Field appears 300ms after load; .or() auto-waits instead of
+      // falling through to the placeholder branch.
+      await driver.fillIn("Late Field", "made it");
+      await expect(page.getByLabel("Late Field")).toHaveValue("made it");
     });
   });
 
@@ -155,6 +166,40 @@ test.describe("PlaywrightDriver", () => {
       await expect(driver.submit()).rejects.toThrow(
         "submit() called but no form was previously interacted with",
       );
+    });
+
+    test("prefers type='submit' over accessible name containing 'submit'", async ({
+      page,
+    }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/submit-precedence");
+      await driver.fillIn("Value", "test");
+      await driver.submit();
+      await expect(page.locator("#r")).toHaveText("Saved!");
+    });
+  });
+
+  test.describe("upload()", () => {
+    test("sets a file input by label", async ({ page }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/upload");
+      await driver.upload("Avatar", "package.json");
+      await expect(page.locator("#uploaded")).toContainText(
+        "Uploaded: package.json",
+      );
+    });
+  });
+
+  test.describe("dropFile()", () => {
+    test("dispatches a DataTransfer drop on a selector", async ({ page }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/upload");
+      await driver.dropFile("#dropzone", "package.json");
+      await expect(page.locator("#dropped")).toContainText(
+        "Dropped: package.json",
+      );
+      // Real file content was transferred, not an empty placeholder
+      await expect(page.locator("#dropped")).not.toContainText("(0 bytes)");
     });
   });
 
@@ -276,7 +321,116 @@ test.describe("PlaywrightDriver", () => {
     });
   });
 
+  test.describe("form-state assertions", () => {
+    test("assertValue passes for a filled labeled input", async ({ page }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/form");
+      await driver.fillIn("Name", "Alice");
+      await driver.assertValue("Name", "Alice");
+    });
+
+    test("assertValue works with placeholder fields", async ({ page }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/form");
+      await driver.fillIn("Nickname", "Ali");
+      await driver.assertValue("Nickname", "Ali");
+    });
+
+    test("assertValue fails on wrong value", async ({ page }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/form");
+      await driver.fillIn("Name", "Alice");
+      await expect(driver.assertValue("Name", "Bob")).rejects.toThrow();
+    });
+
+    test("assertChecked passes for a checked checkbox", async ({ page }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/form");
+      await driver.assertChecked("Receive ads");
+    });
+
+    test("assertChecked fails for an unchecked checkbox", async ({ page }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/form");
+      await expect(
+        driver.assertChecked("Subscribe to newsletter"),
+      ).rejects.toThrow();
+    });
+
+    test("refuteChecked passes for an unchecked checkbox", async ({
+      page,
+    }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/form");
+      await driver.refuteChecked("Subscribe to newsletter");
+    });
+
+    test("refuteChecked fails for a checked checkbox", async ({ page }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/form");
+      await expect(driver.refuteChecked("Receive ads")).rejects.toThrow();
+    });
+
+    test("assertSelected passes for the selected option label", async ({
+      page,
+    }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/form");
+      await driver.selectOption("Favorite Color", "Blue");
+      await driver.assertSelected("Favorite Color", "Blue");
+    });
+
+    test("assertSelected fails for a non-selected option", async ({
+      page,
+    }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/form");
+      await driver.selectOption("Favorite Color", "Blue");
+      await expect(
+        driver.assertSelected("Favorite Color", "Red"),
+      ).rejects.toThrow();
+    });
+
+    test("assertOptions passes when the select offers exactly these options", async ({
+      page,
+    }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/form");
+      await driver.assertOptions("Favorite Color", [
+        "--Select--",
+        "Red",
+        "Green",
+        "Blue",
+      ]);
+    });
+
+    test("assertOptions fails when an option is missing from the expectation", async ({
+      page,
+    }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/form");
+      await expect(
+        driver.assertOptions("Favorite Color", ["Red", "Green", "Blue"]),
+      ).rejects.toThrow();
+    });
+  });
+
   test.describe("assertPath() / refutePath()", () => {
+    test("assertPath does not match a path suffix", async ({ page }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/re/import");
+      await driver.assertPath("/re/import");
+      await expect(driver.assertPath("/import")).rejects.toThrow();
+    });
+
+    test("refutePath passes on a path suffix of the current path", async ({
+      page,
+    }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/re/import");
+      await driver.refutePath("/import");
+    });
+
     test("assertPath passes when on the correct path", async ({ page }) => {
       const driver = new PlaywrightDriver(page);
       await driver.visit("/about");
@@ -354,5 +508,49 @@ test.describe("PlaywrightDriver", () => {
       // Just verify it doesn't throw
       await driver.debug();
     });
+  });
+});
+
+test.describe("Session with PlaywrightDriver", () => {
+  test("step() receives the page and scope", async ({ page }) => {
+    const session = new Session(new PlaywrightDriver(page));
+    await session
+      .visit("/form")
+      .step("fill name directly", async ({ page: p, scope }) => {
+        expect(scope).toBe(p);
+        await p.getByLabel("Name").fill("via step");
+      })
+      .assertValue("Name", "via step");
+  });
+
+  test("failed step() shows its name in StepError", async ({ page }) => {
+    const session = new Session(new PlaywrightDriver(page));
+    try {
+      await session.visit("/form").step("explode", async () => {
+        throw new Error("boom");
+      });
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(StepError);
+      expect((e as StepError).message).toContain(
+        ">>> [FAILED] step('explode')",
+      );
+      expect((e as StepError).message).toContain("Cause: boom");
+    }
+  });
+
+  test("StepError includes steps from earlier chains", async ({ page }) => {
+    const session = new Session(new PlaywrightDriver(page));
+    await session.visit("/form").fillIn("Name", "Alice");
+
+    try {
+      await session.assertText("Nonexistent text");
+      throw new Error("should have thrown");
+    } catch (e) {
+      const msg = (e as StepError).message;
+      expect(msg).toContain("[ok] visit('/form')");
+      expect(msg).toContain("[ok] fillIn('Name', 'Alice')");
+      expect(msg).toContain(">>> [FAILED] assertText('Nonexistent text')");
+    }
   });
 });

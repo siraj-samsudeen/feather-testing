@@ -31,12 +31,23 @@ function createMockDriver(overrides?: Partial<TestDriver>): {
     uncheck: vi.fn(handler("uncheck")),
     choose: vi.fn(handler("choose")),
     submit: vi.fn(handler("submit")),
+    upload: vi.fn(handler("upload")),
+    dropFile: vi.fn(handler("dropFile")),
     assertText: vi.fn(handler("assertText")),
     refuteText: vi.fn(handler("refuteText")),
+    assertValue: vi.fn(handler("assertValue")),
+    assertChecked: vi.fn(handler("assertChecked")),
+    refuteChecked: vi.fn(handler("refuteChecked")),
+    assertSelected: vi.fn(handler("assertSelected")),
+    assertOptions: vi.fn(handler("assertOptions")),
     assertHas: vi.fn(handler("assertHas")),
     refuteHas: vi.fn(handler("refuteHas")),
     assertPath: vi.fn(handler("assertPath")),
     refutePath: vi.fn(handler("refutePath")),
+    step: vi.fn(async (fn: (context: unknown) => Promise<unknown>) => {
+      calls.push("step");
+      await fn({ mock: true });
+    }),
     within: vi.fn(async (selector: string) => {
       calls.push(`within(${JSON.stringify(selector)})`);
       // Return a new mock driver for the scoped session
@@ -67,12 +78,20 @@ describe("Session", () => {
         .uncheck("label")
         .choose("label")
         .submit()
+        .upload("label", "path.txt")
+        .dropFile(".zone", "path.txt")
         .assertText("text")
         .refuteText("text")
+        .assertValue("label", "value")
+        .assertChecked("label")
+        .refuteChecked("label")
+        .assertSelected("label", "option")
+        .assertOptions("label", ["a", "b"])
         .assertHas("selector")
         .refuteHas("selector")
         .assertPath("/path")
         .refutePath("/path")
+        .step("custom", async () => {})
         .debug();
 
       // result is the same session (not yet awaited)
@@ -145,8 +164,15 @@ describe("Session", () => {
         .uncheck("Ads")
         .choose("Plan A")
         .submit()
+        .upload("Avatar", "avatar.png")
+        .dropFile("#zone", "doc.pdf")
         .assertText("Hello")
         .refuteText("Goodbye")
+        .assertValue("Email", "a@b.com")
+        .assertChecked("Newsletter")
+        .refuteChecked("Ads")
+        .assertSelected("Color", "Red")
+        .assertOptions("Color", ["Red", "Blue"])
         .assertHas("div.card", { text: "hi", count: 2 })
         .refuteHas("span.error")
         .assertPath("/done", { queryParams: { id: "1" } })
@@ -163,8 +189,18 @@ describe("Session", () => {
       expect(driver.uncheck).toHaveBeenCalledWith("Ads");
       expect(driver.choose).toHaveBeenCalledWith("Plan A");
       expect(driver.submit).toHaveBeenCalled();
+      expect(driver.upload).toHaveBeenCalledWith("Avatar", "avatar.png");
+      expect(driver.dropFile).toHaveBeenCalledWith("#zone", "doc.pdf");
       expect(driver.assertText).toHaveBeenCalledWith("Hello");
       expect(driver.refuteText).toHaveBeenCalledWith("Goodbye");
+      expect(driver.assertValue).toHaveBeenCalledWith("Email", "a@b.com");
+      expect(driver.assertChecked).toHaveBeenCalledWith("Newsletter");
+      expect(driver.refuteChecked).toHaveBeenCalledWith("Ads");
+      expect(driver.assertSelected).toHaveBeenCalledWith("Color", "Red");
+      expect(driver.assertOptions).toHaveBeenCalledWith("Color", [
+        "Red",
+        "Blue",
+      ]);
       expect(driver.assertHas).toHaveBeenCalledWith("div.card", {
         text: "hi",
         count: 2,
@@ -324,8 +360,43 @@ describe("Session", () => {
     });
   });
 
-  describe("step index tracking", () => {
-    it("increments step index across multiple chains", async () => {
+  describe("step() escape hatch", () => {
+    it("passes the driver-provided context to the callback", async () => {
+      const { driver } = createMockDriver();
+      const session = new Session(driver);
+
+      let received: unknown;
+      await session.step("custom work", async (context) => {
+        received = context;
+      });
+
+      expect(received).toEqual({ mock: true });
+      expect(driver.step).toHaveBeenCalled();
+    });
+
+    it("shows the step name in StepError when it fails", async () => {
+      const { driver } = createMockDriver({
+        step: vi.fn(async (fn: (context: unknown) => Promise<unknown>) => {
+          await fn({});
+        }),
+      });
+      const session = new Session(driver);
+
+      try {
+        await session.visit("/").step("drag the card", async () => {
+          throw new Error("drag failed");
+        });
+        expect.fail("should have thrown");
+      } catch (e) {
+        const msg = (e as StepError).message;
+        expect(msg).toContain(">>> [FAILED] step('drag the card')");
+        expect(msg).toContain("Cause: drag failed");
+      }
+    });
+  });
+
+  describe("session-level step history", () => {
+    it("includes steps from earlier chains in StepError", async () => {
       const { driver } = createMockDriver({
         assertText: vi.fn(async () => {
           throw new Error("fail");
@@ -336,16 +407,58 @@ describe("Session", () => {
       // First chain: 2 steps (indices 0, 1)
       await session.visit("/").clickButton("Go");
 
-      // Second chain: step indices continue from 2 (indices 2, 3)
-      // The error message shows the global step index + 1, not per-chain
+      // Second chain fails: StepError shows the full walk across chains
       try {
         await session.fillIn("Name", "x").assertText("Done");
         expect.fail("should have thrown");
       } catch (e) {
-        // assertText has global index 3, displayed as "Step 4"
-        // "of 2" counts only the steps in the current chain
-        expect((e as StepError).message).toContain("Step 4 of 2 failed");
+        const msg = (e as StepError).message;
+        expect(msg).toContain("Step 4 of 4 failed");
+        expect(msg).toContain("    [ok] visit('/')");
+        expect(msg).toContain("    [ok] clickButton('Go')");
+        expect(msg).toContain("    [ok] fillIn('Name', 'x')");
+        expect(msg).toContain(">>> [FAILED] assertText('Done')");
       }
+    });
+
+    it("marks steps after the failure as skipped across chains", async () => {
+      const { driver } = createMockDriver({
+        fillIn: vi.fn(async () => {
+          throw new Error("input not found");
+        }),
+      });
+      const session = new Session(driver);
+
+      await session.visit("/");
+
+      try {
+        await session.fillIn("Name", "x").clickButton("Go");
+        expect.fail("should have thrown");
+      } catch (e) {
+        const msg = (e as StepError).message;
+        expect(msg).toContain("Step 2 of 3 failed");
+        expect(msg).toContain("    [ok] visit('/')");
+        expect(msg).toContain(">>> [FAILED] fillIn('Name', 'x')");
+        expect(msg).toContain("    [skipped] clickButton('Go')");
+      }
+    });
+  });
+
+  describe("wrapStep hook", () => {
+    it("wraps each step execution when the driver provides wrapStep", async () => {
+      const wrapped: string[] = [];
+      const { driver } = createMockDriver();
+      driver.wrapStep = vi.fn(
+        async (name: string, fn: () => Promise<void>) => {
+          wrapped.push(name);
+          await fn();
+        },
+      );
+      const session = new Session(driver);
+
+      await session.visit("/").clickButton("Go");
+
+      expect(wrapped).toEqual(["visit('/')", "clickButton('Go')"]);
     });
   });
 });

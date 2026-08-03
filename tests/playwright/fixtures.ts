@@ -148,6 +148,70 @@ export const pages: Record<string, string> = {
   <h1>Search Results</h1>
   <p>Showing results for your query</p>
 </body></html>`,
+
+  "/re/import": `<!DOCTYPE html>
+<html><body>
+  <h1>Re-Import</h1>
+</body></html>`,
+
+  "/import": `<!DOCTYPE html>
+<html><body>
+  <h1>Import</h1>
+</body></html>`,
+
+  "/delayed-field": `<!DOCTYPE html>
+<html><body>
+  <h1>Delayed Field</h1>
+  <div id="slot"></div>
+  <script>
+    setTimeout(function() {
+      document.getElementById('slot').innerHTML =
+        '<form><label for="late">Late Field</label><input id="late" name="late" /></form>';
+    }, 300);
+  </script>
+</body></html>`,
+
+  "/submit-precedence": `<!DOCTYPE html>
+<html><body>
+  <form id="f">
+    <label for="val">Value</label>
+    <input id="val" name="val" />
+    <button type="button" onclick="document.getElementById('r').textContent='Wrong button!'">Submit other</button>
+    <button type="submit">Save</button>
+  </form>
+  <p id="r"></p>
+  <script>
+    document.getElementById('f').addEventListener('submit', function(e) {
+      e.preventDefault();
+      document.getElementById('r').textContent = 'Saved!';
+    });
+  </script>
+</body></html>`,
+
+  "/upload": `<!DOCTYPE html>
+<html><body>
+  <form>
+    <label for="avatar">Avatar</label>
+    <input id="avatar" name="avatar" type="file" />
+  </form>
+  <div id="dropzone" style="width:200px;height:100px;border:1px dashed #999">Drop files here</div>
+  <p id="uploaded"></p>
+  <p id="dropped"></p>
+  <script>
+    document.getElementById('avatar').addEventListener('change', function(e) {
+      document.getElementById('uploaded').textContent =
+        'Uploaded: ' + e.target.files[0].name + ' (' + e.target.files[0].size + ' bytes)';
+    });
+    var zone = document.getElementById('dropzone');
+    zone.addEventListener('dragover', function(e) { e.preventDefault(); });
+    zone.addEventListener('drop', function(e) {
+      e.preventDefault();
+      var file = e.dataTransfer.files[0];
+      document.getElementById('dropped').textContent =
+        'Dropped: ' + file.name + ' (' + file.size + ' bytes)';
+    });
+  </script>
+</body></html>`,
 };
 
 export const test = base.extend({
