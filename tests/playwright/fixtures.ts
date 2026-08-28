@@ -167,6 +167,19 @@ export const pages: Record<string, string> = {
   </main>
 </body></html>`,
 
+  // Work that finishes on its own — the shape until() exists for.
+  "/eventual": `<!DOCTYPE html>
+<html><body>
+  <h1>Eventual</h1>
+  <p id="status">Working</p>
+  <script>
+    setTimeout(function() {
+      document.getElementById('status').textContent = 'Ready';
+      window.__jobDone = true;
+    }, 400);
+  </script>
+</body></html>`,
+
   "/search": `<!DOCTYPE html>
 <html><body>
   <h1>Search Results</h1>

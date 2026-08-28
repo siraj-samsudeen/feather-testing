@@ -5,6 +5,8 @@ import type {
   AssertHasOptions,
   AssertPathOptions,
   TestDriver,
+  UntilOptions,
+  UntilPredicate,
 } from "../types.js";
 
 /** Context handed to custom step() callbacks in the Playwright adapter. */
@@ -226,10 +228,29 @@ export class PlaywrightDriver implements TestDriver<PlaywrightStepContext> {
       .not.toBe(path);
   }
 
+  async until(
+    description: string,
+    predicate: UntilPredicate<PlaywrightStepContext>,
+    opts?: UntilOptions,
+  ): Promise<void> {
+    await expect
+      .poll(async () => Boolean(await predicate(this.context())), {
+        message: `until: ${description}`,
+        timeout: opts?.timeout,
+        intervals: opts?.interval === undefined ? undefined : [opts.interval],
+      })
+      .toBe(true);
+  }
+
   async step(
     fn: (context: PlaywrightStepContext) => Promise<unknown>,
   ): Promise<void> {
-    await fn({ page: this.page, scope: this.scope });
+    await fn(this.context());
+  }
+
+  /** The adapter context handed to step(), until(), and friends. */
+  protected context(): PlaywrightStepContext {
+    return { page: this.page, scope: this.scope };
   }
 
   async within(selector: string): Promise<TestDriver<PlaywrightStepContext>> {

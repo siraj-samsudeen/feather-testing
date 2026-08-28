@@ -9,11 +9,23 @@ export interface AssertPathOptions {
   queryParams?: Record<string, string>;
 }
 
+export interface UntilOptions {
+  /** Overall budget in ms. Defaults to the adapter's own wait timeout. */
+  timeout?: number;
+  /** Gap between polls in ms. Defaults to the adapter's own cadence. */
+  interval?: number;
+}
+
 export interface QueuedStep {
   name: string;
   action: () => Promise<void>;
   index: number;
 }
+
+/** A condition polled by `until()`; may be sync or async. */
+export type UntilPredicate<TContext> = (
+  context: TContext,
+) => unknown | Promise<unknown>;
 
 /**
  * TContext is the adapter-specific context handed to custom step() callbacks
@@ -43,6 +55,16 @@ export interface TestDriver<TContext = unknown> {
   assertOptions(label: string, optionLabels: string[]): Promise<void>;
   assertPath(path: string, opts?: AssertPathOptions): Promise<void>;
   refutePath(path: string): Promise<void>;
+  /**
+   * Poll `predicate` until it returns something truthy, or fail once the
+   * timeout is spent. `description` is what the chain trace prints, so it
+   * has to say what is being awaited in plain language.
+   */
+  until(
+    description: string,
+    predicate: UntilPredicate<TContext>,
+    opts?: UntilOptions,
+  ): Promise<void>;
   step(fn: (context: TContext) => Promise<unknown>): Promise<void>;
   within(selector: string): Promise<TestDriver<TContext>>;
   debug(): Promise<void>;

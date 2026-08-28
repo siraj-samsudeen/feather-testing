@@ -1,7 +1,9 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { RTLDriver } from "../../src/rtl/driver.js";
+import { createSession } from "../../src/rtl/index.js";
+import { StepError } from "../../src/errors.js";
 
 afterEach(() => {
   cleanup();
@@ -212,6 +214,16 @@ function UploadApp() {
       {dropped && <p>Dropped: {dropped}</p>}
     </div>
   );
+}
+
+/** Flips from "Working" to "Ready" on its own, the way real async work does. */
+function EventuallyApp() {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setReady(true), 120);
+    return () => clearTimeout(id);
+  }, []);
+  return <p>{ready ? "Ready" : "Working"}</p>;
 }
 
 function DisappearingApp() {
@@ -526,6 +538,64 @@ describe("RTLDriver", () => {
 
       expect(receivedUser).toBeDefined();
       expect(screen.getByText("Clicked: action")).toBeTruthy();
+    });
+  });
+
+  describe("until()", () => {
+    it("polls until the condition holds", async () => {
+      render(<EventuallyApp />);
+      const driver = new RTLDriver();
+
+      await driver.until(
+        "the worker reports ready",
+        ({ container }) => container.queryByText("Ready") !== null,
+        { timeout: 2000 },
+      );
+
+      expect(screen.getByText("Ready")).not.toBeNull();
+    });
+
+    it("accepts an async predicate", async () => {
+      render(<EventuallyApp />);
+      const driver = new RTLDriver();
+
+      await driver.until(
+        "the worker reports ready",
+        async ({ container }) => container.queryByText("Ready"),
+        { timeout: 2000 },
+      );
+    });
+
+    it("names the awaited condition when the budget runs out", async () => {
+      render(<EventuallyApp />);
+      const driver = new RTLDriver();
+
+      await expect(
+        driver.until("the worker reports failure", () => false, {
+          timeout: 200,
+        }),
+      ).rejects.toThrow("until: the worker reports failure");
+    });
+
+    it("shows the description in the chain trace through a Session", async () => {
+      render(<EventuallyApp />);
+      const session = createSession();
+
+      const error = await session
+        .assertText("Working")
+        .until("the worker reports failure", () => false, { timeout: 200 })
+        .assertText("Ready")
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+
+      expect(error).toBeInstanceOf(StepError);
+      expect(error?.message).toContain("    [ok] assertText('Working')");
+      expect(error?.message).toContain(
+        ">>> [FAILED] until: the worker reports failure",
+      );
+      expect(error?.message).toContain("    [skipped] assertText('Ready')");
     });
   });
 

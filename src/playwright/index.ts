@@ -9,6 +9,8 @@ export type {
   AssertHasOptions,
   AssertPathOptions,
   TestDriver,
+  UntilOptions,
+  UntilPredicate,
 } from "../types.js";
 
 export function createSession(page: Page): Session<PlaywrightStepContext> {

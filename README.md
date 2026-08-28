@@ -293,6 +293,34 @@ await session.assertPath("/search", { queryParams: { q: "hello", page: "1" } });
 await session.refutePath("/login");
 ```
 
+### Waiting: `until(description, fn)`
+
+| Method | Description |
+|--------|-------------|
+| `until(description, fn, opts?)` | Poll `fn` until it returns something truthy, then continue |
+
+Tests wait for conditions, not for clocks. `until()` is the honest alternative to a sleep: it polls a predicate you write, and the **mandatory** description is what the trace prints, so a timeout names the thing you were waiting for instead of the mechanism you waited with.
+
+```ts
+await session
+  .visit("/exports")
+  .clickButton("Export")
+  .until("the export job reports done", ({ page }) =>
+    page.evaluate(() => window.__exportDone),
+  )
+  .assertText("Download ready");
+```
+
+The predicate receives the adapter context — `{ page, scope }` for Playwright, `{ user, container }` for RTL — and may be sync or async. `opts` takes `{ timeout, interval }` in ms; omit them to inherit the adapter's own budget (Playwright's `expect.poll`, RTL's `waitFor`).
+
+When the budget runs out, the chain trace says what you were waiting for:
+
+```
+>>> [FAILED] until: the export job reports done
+```
+
+The description is required at the call site, before the chain runs — a blank one throws immediately, because a step named `until: ` teaches a reader nothing. The `feather-testing/no-wait-for-timeout` lint rule (see [Lint plugin](#lint-plugin)) points at this verb, so "no sleeps" stops being a review convention and becomes a check.
+
 ### Scoping
 
 | Method | Description |

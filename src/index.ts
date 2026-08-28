@@ -5,4 +5,6 @@ export type {
   AssertPathOptions,
   QueuedStep,
   TestDriver,
+  UntilOptions,
+  UntilPredicate,
 } from "./types.js";

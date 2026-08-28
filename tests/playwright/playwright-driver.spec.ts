@@ -638,3 +638,63 @@ test.describe("Session with PlaywrightDriver", () => {
     }
   });
 });
+
+test.describe("until()", () => {
+  test("polls a page condition until it holds", async ({ page }) => {
+    const driver = new PlaywrightDriver(page);
+    await driver.visit("/eventual");
+
+    await driver.until("the job reports done", ({ page: p }) =>
+      p.evaluate(() => (window as unknown as Record<string, unknown>).__jobDone),
+    );
+
+    await expect(page.locator("#status")).toHaveText("Ready");
+  });
+
+  test("accepts a sync predicate over the scope", async ({ page }) => {
+    const driver = new PlaywrightDriver(page);
+    await driver.visit("/eventual");
+
+    await driver.until(
+      "the status reads Ready",
+      async ({ scope }) =>
+        (await scope.locator("#status").textContent()) === "Ready",
+    );
+  });
+
+  test("timeout names the awaited condition in the chain trace", async ({
+    page,
+  }) => {
+    const session = new Session(new PlaywrightDriver(page));
+
+    try {
+      await session
+        .visit("/eventual")
+        .until("the job reports failure", () => false, { timeout: 500 })
+        .assertText("Ready");
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(StepError);
+      const msg = (e as StepError).message;
+      expect(msg).toContain("[ok] visit('/eventual')");
+      expect(msg).toContain(">>> [FAILED] until: the job reports failure");
+      expect(msg).toContain("[skipped] assertText('Ready')");
+    }
+  });
+
+  test("a within()-scoped until sees only the scoped subtree", async ({
+    page,
+  }) => {
+    const session = new Session(new PlaywrightDriver(page));
+    await session
+      .visit("/scoped")
+      .within(".main", (s) =>
+        s.until(
+          "the main panel is rendered",
+          async ({ scope }) =>
+            (await scope.getByText("Main content").count()) === 1 &&
+            (await scope.getByText("Sidebar content").count()) === 0,
+        ),
+      );
+  });
+});

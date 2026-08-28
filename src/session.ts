@@ -3,8 +3,24 @@ import type {
   AssertPathOptions,
   QueuedStep,
   TestDriver,
+  UntilOptions,
+  UntilPredicate,
 } from "./types.js";
 import { StepError } from "./errors.js";
+
+/**
+ * Verbs that take a human description exist so a failure names intent rather
+ * than mechanics. An empty description defeats that, so it is rejected where
+ * the mistake is — at the call site, before the chain runs.
+ */
+function requireDescription(verb: string, value: string): void {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(
+      `feather-testing-core: ${verb}() requires a non-empty description as its ` +
+        "first argument — it is what the chain trace prints when the step fails.",
+    );
+  }
+}
 
 export class Session<TContext = unknown> implements PromiseLike<void> {
   private steps: QueuedStep[] = [];
@@ -189,6 +205,28 @@ export class Session<TContext = unknown> implements PromiseLike<void> {
   refutePath(path: string): this {
     return this.enqueue(`refutePath('${path}')`, () =>
       this.driver.refutePath(path),
+    );
+  }
+
+  // --- Waiting ---
+
+  /**
+   * Wait for a condition instead of sleeping. `description` is mandatory: it
+   * is what the chain trace prints, so a timeout reads
+   * `[FAILED] until: the export finishes` rather than naming a mechanism.
+   *
+   * The predicate receives the adapter's context ({ page, scope } for
+   * Playwright, { user, container } for RTL) and may be sync or async; it
+   * is polled until it returns something truthy or the budget is spent.
+   */
+  until(
+    description: string,
+    predicate: UntilPredicate<TContext>,
+    opts?: UntilOptions,
+  ): this {
+    requireDescription("until", description);
+    return this.enqueue(`until: ${description}`, () =>
+      this.driver.until(description, predicate, opts),
     );
   }
 

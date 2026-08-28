@@ -5,7 +5,12 @@ import {
   within as rtlWithin,
 } from "@testing-library/react";
 import userEvent, { type UserEvent } from "@testing-library/user-event";
-import type { AssertHasOptions, TestDriver } from "../types.js";
+import type {
+  AssertHasOptions,
+  TestDriver,
+  UntilOptions,
+  UntilPredicate,
+} from "../types.js";
 
 /** Context handed to custom step() callbacks in the RTL adapter. */
 export interface RTLStepContext {
@@ -316,8 +321,34 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
     );
   }
 
+  async until(
+    description: string,
+    predicate: UntilPredicate<RTLStepContext>,
+    opts?: UntilOptions,
+  ): Promise<void> {
+    await waitFor(
+      async () => {
+        if (!(await predicate(this.context()))) {
+          throw new Error(
+            `until: ${description} — condition was still not met.`,
+          );
+        }
+      },
+      {
+        ...this.waitOpts(),
+        ...(opts?.timeout === undefined ? {} : { timeout: opts.timeout }),
+        ...(opts?.interval === undefined ? {} : { interval: opts.interval }),
+      },
+    );
+  }
+
   async step(fn: (context: RTLStepContext) => Promise<unknown>): Promise<void> {
-    await fn({ user: this.user, container: this.container });
+    await fn(this.context());
+  }
+
+  /** The adapter context handed to step(), until(), and friends. */
+  protected context(): RTLStepContext {
+    return { user: this.user, container: this.container };
   }
 
   async within(selector: string): Promise<TestDriver<RTLStepContext>> {
