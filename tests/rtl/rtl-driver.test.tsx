@@ -715,3 +715,96 @@ describe("RTLDriver — exact addressing", () => {
     ).toBe("");
   });
 });
+
+// Two panels with identical inner markup: a driver scoped to `.main` must
+// resolve `.panel` inside its own scope, not from the top of the document.
+function NestedScopeApp() {
+  return (
+    <div>
+      <div className="sidebar">
+        <div className="panel">
+          <p>Sidebar panel</p>
+        </div>
+      </div>
+      <div className="main">
+        <div className="panel">
+          <p>Main panel</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+describe("RTLDriver — scoping resolves against the current scope", () => {
+  it("within() nests", async () => {
+    render(<NestedScopeApp />);
+    const driver = new RTLDriver();
+
+    const main = await driver.within(".main");
+    const panel = await main.within(".panel");
+
+    await panel.assertText("Main panel");
+    await expect(panel.assertText("Sidebar panel")).rejects.toThrow();
+  });
+
+  it("a driver constructed with a container scopes selector lookups too", async () => {
+    render(<NestedScopeApp />);
+    const mainEl = document.querySelector(".main") as HTMLElement;
+    const driver = new RTLDriver(undefined, mainEl);
+
+    const panel = await driver.within(".panel");
+    await panel.assertText("Main panel");
+  });
+});
+
+// Labels with no htmlFor and no nesting — the control is a sibling inside a
+// wrapper. RTL's own findByLabelText cannot see these, which is exactly the
+// case a host adapter specializes findField() for.
+function WrapperLabelApp() {
+  return (
+    <form>
+      <div>
+        <label>Subject</label>
+        <input name="subject" defaultValue="" />
+      </div>
+    </form>
+  );
+}
+
+class WrapperLabelDriver extends RTLDriver {
+  protected override async findField(label: string): Promise<HTMLElement> {
+    for (const l of Array.from(this.rootElement().querySelectorAll("label"))) {
+      if ((l.textContent ?? "").trim() !== label) continue;
+      const sibling = l.parentElement?.querySelector("input, textarea, select");
+      if (sibling) return sibling as HTMLElement;
+    }
+    throw new Error(`no field labelled '${label}'`);
+  }
+
+  protected override scoped(element: HTMLElement) {
+    return new WrapperLabelDriver(this.user, element, this.timeout);
+  }
+}
+
+describe("RTLDriver — findField() is the seam for a host adapter's markup", () => {
+  it("overriding findField retargets every labelled verb", async () => {
+    render(<WrapperLabelApp />);
+    const stock = new RTLDriver();
+    // The stock lookup genuinely cannot find this control...
+    await expect(stock.fillIn("Subject", "x")).rejects.toThrow();
+
+    // ...and one overridden method is enough to fix fillIn AND the
+    // assertions that never mention findField themselves.
+    const driver = new WrapperLabelDriver();
+    await driver.fillIn("Subject", "Sales mismatch");
+    await driver.assertValue("Subject", "Sales mismatch");
+  });
+
+  it("within() keeps the subclass's lookup", async () => {
+    render(<WrapperLabelApp />);
+    const driver = new WrapperLabelDriver();
+    const scoped = await driver.within("form");
+    await scoped.fillIn("Subject", "scoped");
+    await scoped.assertValue("Subject", "scoped");
+  });
+});

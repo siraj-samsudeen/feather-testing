@@ -406,6 +406,36 @@ The RTL adapter runs in JSDOM, which has no real browser. These methods are not 
 - `assertPath()` / `refutePath()` — no URL in JSDOM
 - `assertHas()` / `refuteHas()` — RTL discourages CSS selectors; use `assertText()` instead
 
+### Extending the RTL adapter
+
+`RTLDriver` is meant to be subclassed when an app's markup needs a different lookup, so that a host harness binds *this* DSL rather than reimplementing it. Everything worth specializing is `protected`:
+
+| Member | Why you'd override it |
+|--------|----------------------|
+| `findField(label)` | The single label-addressed lookup. Every labelled verb — `fillIn`, `selectOption`, `check`, `uncheck`, `upload`, `assertValue`, `assertChecked`, `assertSelected`, `assertOptions` — goes through it, so one override retargets them all |
+| `scoped(element)` | Factory used by `within()`, so a scoped session keeps your driver's behaviour |
+| `user`, `root`, `container`, `lastFormElement`, `timeout` | Shared state the built-in verbs read and write |
+
+```ts
+class WrapperLabelDriver extends RTLDriver {
+  // Labels with no htmlFor, control is a sibling inside a wrapper div
+  protected override async findField(label: string): Promise<HTMLElement> {
+    for (const l of this.rootElement().querySelectorAll("label")) {
+      if (l.textContent?.trim() !== label) continue;
+      const control = l.parentElement?.querySelector("input, textarea, select");
+      if (control) return control as HTMLElement;
+    }
+    throw new Error(`no field labelled '${label}'`);
+  }
+
+  protected override scoped(element: HTMLElement) {
+    return new WrapperLabelDriver(this.user, element, this.timeout);
+  }
+}
+```
+
+The third constructor argument is a per-lookup timeout in ms; omit it to keep RTL's own default.
+
 ## Exports
 
 ```ts

@@ -22,32 +22,63 @@ type ValueElement =
 /**
  * RTL adapter implementing the subset of TestDriver that applies in JSDOM.
  * Navigation methods (visit, assertPath, refutePath) are not supported.
+ *
+ * Everything a host adapter is likely to specialize is `protected`: the
+ * label-to-control lookup (`findField`), the scoped-driver factory
+ * (`scoped`), and the `user` / `root` / `lastFormElement` state the verbs
+ * share. Subclass it rather than reimplementing the DSL when an app's markup
+ * needs a different lookup — that is how feather-testing-postgres binds this
+ * driver to markup whose labels are wrapper siblings rather than `htmlFor`
+ * targets.
  */
 export class RTLDriver implements TestDriver<RTLStepContext> {
-  private user: UserEvent;
-  private container: ReturnType<typeof rtlWithin> | typeof screen;
-  private lastFormElement: HTMLFormElement | null = null;
+  protected user: UserEvent;
+  /** The element every query and selector in this driver resolves against. */
+  protected root: HTMLElement;
+  protected container: ReturnType<typeof rtlWithin>;
+  protected lastFormElement: HTMLFormElement | null = null;
+  /** Per-lookup timeout in ms; undefined leaves RTL's own default in place. */
+  protected timeout: number | undefined;
 
-  constructor(user?: UserEvent, container?: HTMLElement) {
+  constructor(user?: UserEvent, container?: HTMLElement, timeout?: number) {
     this.user = user ?? userEvent.setup();
-    this.container = container ? rtlWithin(container) : screen;
+    this.root = container ?? document.body;
+    this.container = rtlWithin(this.root);
+    this.timeout = timeout;
   }
 
-  private rootElement(): HTMLElement {
-    return this.container === screen
-      ? document.body
-      : ((this.container as unknown as { container: HTMLElement })
-          .container ?? document.body);
+  protected rootElement(): HTMLElement {
+    return this.root;
   }
 
-  private async findFieldByLabelOrPlaceholder(
-    label: string,
-  ): Promise<HTMLElement> {
+  /** Options forwarded to every async query and waitFor call. */
+  protected waitOpts(): { timeout?: number } {
+    return this.timeout === undefined ? {} : { timeout: this.timeout };
+  }
+
+  /**
+   * The single label-addressed lookup: every labelled verb goes through it,
+   * so overriding this one method retargets them all.
+   */
+  protected async findField(label: string): Promise<HTMLElement> {
     try {
-      return await this.container.findByLabelText(label);
+      return await this.container.findByLabelText(
+        label,
+        undefined,
+        this.waitOpts(),
+      );
     } catch {
-      return await this.container.findByPlaceholderText(label);
+      return await this.container.findByPlaceholderText(
+        label,
+        undefined,
+        this.waitOpts(),
+      );
     }
+  }
+
+  /** Subclasses override this so within() yields a driver of their own type. */
+  protected scoped(element: HTMLElement): TestDriver<RTLStepContext> {
+    return new RTLDriver(this.user, element, this.timeout);
   }
 
   async visit(): Promise<void> {
@@ -57,29 +88,41 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
   }
 
   async click(text: string): Promise<void> {
-    const element = await this.container.findByText(text);
+    const element = await this.container.findByText(
+      text,
+      undefined,
+      this.waitOpts(),
+    );
     await this.user.click(element);
   }
 
   async clickLink(text: string): Promise<void> {
-    const link = await this.container.findByRole("link", { name: text });
+    const link = await this.container.findByRole(
+      "link",
+      { name: text },
+      this.waitOpts(),
+    );
     await this.user.click(link);
   }
 
   async clickButton(text: string): Promise<void> {
-    const button = await this.container.findByRole("button", { name: text });
+    const button = await this.container.findByRole(
+      "button",
+      { name: text },
+      this.waitOpts(),
+    );
     await this.user.click(button);
   }
 
   async fillIn(label: string, value: string): Promise<void> {
-    const input = await this.findFieldByLabelOrPlaceholder(label);
+    const input = await this.findField(label);
     await this.user.clear(input);
-    await this.user.type(input, value);
+    if (value) await this.user.type(input, value);
     this.lastFormElement = input.closest("form");
   }
 
   async selectOption(label: string, option: string): Promise<void> {
-    const select = await this.container.findByLabelText(label);
+    const select = await this.findField(label);
     const optionEl = Array.from(
       (select as HTMLSelectElement).querySelectorAll("option"),
     ).find((o) => o.textContent?.trim() === option);
@@ -93,7 +136,7 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
   }
 
   async check(label: string): Promise<void> {
-    const checkbox = await this.container.findByLabelText(label);
+    const checkbox = await this.findField(label);
     if (!(checkbox as HTMLInputElement).checked) {
       await this.user.click(checkbox);
     }
@@ -101,7 +144,7 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
   }
 
   async uncheck(label: string): Promise<void> {
-    const checkbox = await this.container.findByLabelText(label);
+    const checkbox = await this.findField(label);
     if ((checkbox as HTMLInputElement).checked) {
       await this.user.click(checkbox);
     }
@@ -109,7 +152,11 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
   }
 
   async choose(label: string): Promise<void> {
-    const radio = await this.container.findByRole("radio", { name: label });
+    const radio = await this.container.findByRole(
+      "radio",
+      { name: label },
+      this.waitOpts(),
+    );
     await this.user.click(radio);
     this.lastFormElement = radio.closest("form");
   }
@@ -137,7 +184,7 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
   }
 
   async upload(label: string, path: string): Promise<void> {
-    const input = await this.container.findByLabelText(label);
+    const input = await this.findField(label);
     // JSDOM has no filesystem access; synthesize a File from the basename.
     const name = path.split(/[\\/]/).pop() ?? path;
     const file = new File([""], name);
@@ -180,7 +227,7 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
   }
 
   async assertText(text: string): Promise<void> {
-    await this.container.findByText(text);
+    await this.container.findByText(text, undefined, this.waitOpts());
   }
 
   async refuteText(text: string): Promise<void> {
@@ -191,11 +238,11 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
           `Expected NOT to find text '${text}', but it was present.`,
         );
       }
-    });
+    }, this.waitOpts());
   }
 
   async assertValue(label: string, value: string): Promise<void> {
-    const field = await this.findFieldByLabelOrPlaceholder(label);
+    const field = await this.findField(label);
     await waitFor(() => {
       const actual = (field as ValueElement).value;
       if (actual !== value) {
@@ -203,35 +250,33 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
           `assertValue('${label}', '${value}'): expected value '${value}', but found '${actual}'.`,
         );
       }
-    });
+    }, this.waitOpts());
   }
 
   async assertChecked(label: string): Promise<void> {
-    const checkbox = await this.container.findByLabelText(label);
+    const checkbox = await this.findField(label);
     await waitFor(() => {
       if (!(checkbox as HTMLInputElement).checked) {
         throw new Error(
           `assertChecked('${label}'): expected checkbox to be checked, but it was not.`,
         );
       }
-    });
+    }, this.waitOpts());
   }
 
   async refuteChecked(label: string): Promise<void> {
-    const checkbox = await this.container.findByLabelText(label);
+    const checkbox = await this.findField(label);
     await waitFor(() => {
       if ((checkbox as HTMLInputElement).checked) {
         throw new Error(
           `refuteChecked('${label}'): expected checkbox NOT to be checked, but it was.`,
         );
       }
-    });
+    }, this.waitOpts());
   }
 
   async assertSelected(label: string, optionLabel: string): Promise<void> {
-    const select = (await this.container.findByLabelText(
-      label,
-    )) as HTMLSelectElement;
+    const select = (await this.findField(label)) as HTMLSelectElement;
     await waitFor(() => {
       const selected = select.selectedOptions[0]?.textContent?.trim();
       if (selected !== optionLabel) {
@@ -239,13 +284,11 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
           `assertSelected('${label}', '${optionLabel}'): expected selected option '${optionLabel}', but found '${selected ?? "(none)"}'.`,
         );
       }
-    });
+    }, this.waitOpts());
   }
 
   async assertOptions(label: string, optionLabels: string[]): Promise<void> {
-    const select = (await this.container.findByLabelText(
-      label,
-    )) as HTMLSelectElement;
+    const select = (await this.findField(label)) as HTMLSelectElement;
     await waitFor(() => {
       const actual = Array.from(select.querySelectorAll("option")).map(
         (o) => o.textContent?.trim() ?? "",
@@ -258,7 +301,7 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
           `assertOptions('${label}'): expected options [${optionLabels.join(", ")}], but found [${actual.join(", ")}].`,
         );
       }
-    });
+    }, this.waitOpts());
   }
 
   async assertPath(): Promise<void> {
@@ -280,10 +323,10 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
   async within(selector: string): Promise<TestDriver<RTLStepContext>> {
     const element = this.rootElement().querySelector(selector);
     if (!element) throw new Error(`within('${selector}'): element not found`);
-    return new RTLDriver(this.user, element as HTMLElement);
+    return this.scoped(element as HTMLElement);
   }
 
   async debug(): Promise<void> {
-    screen.debug();
+    screen.debug(this.rootElement());
   }
 }
