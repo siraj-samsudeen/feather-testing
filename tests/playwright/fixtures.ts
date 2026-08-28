@@ -167,6 +167,52 @@ export const pages: Record<string, string> = {
   </main>
 </body></html>`,
 
+  // Work that finishes on its own — the shape until() exists for.
+  "/eventual": `<!DOCTYPE html>
+<html><body>
+  <h1>Eventual</h1>
+  <p id="status">Working</p>
+  <script>
+    setTimeout(function() {
+      document.getElementById('status').textContent = 'Ready';
+      window.__jobDone = true;
+    }, 400);
+  </script>
+</body></html>`,
+
+  "/keys": `<!DOCTYPE html>
+<html><body>
+  <label for="cmd">Command</label>
+  <input id="cmd" />
+  <p id="keys"></p>
+  <script>
+    var keys = [];
+    document.getElementById('cmd').addEventListener('keydown', function(e) {
+      keys.push((e.ctrlKey ? 'Control+' : '') + e.key);
+      document.getElementById('keys').textContent = 'Keys: ' + keys.join(' ');
+    });
+  </script>
+</body></html>`,
+
+  "/hover": `<!DOCTYPE html>
+<html><body>
+  <span id="total">Total</span>
+  <p id="tooltip"></p>
+  <script>
+    document.getElementById('total').addEventListener('mouseenter', function() {
+      document.getElementById('tooltip').textContent = 'Tooltip: 42 items';
+    });
+  </script>
+</body></html>`,
+
+  "/download": `<!DOCTYPE html>
+<html><body>
+  <h1>Exports</h1>
+  <a id="dl" href="data:text/csv;charset=utf-8,a%2Cb%0A1%2C2" download="report.csv">Export CSV</a>
+  <button onclick="document.getElementById('dl').click()">Export</button>
+  <button onclick="document.getElementById('nothing')">Do nothing</button>
+</body></html>`,
+
   "/search": `<!DOCTYPE html>
 <html><body>
   <h1>Search Results</h1>

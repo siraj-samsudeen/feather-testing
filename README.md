@@ -169,8 +169,12 @@ Every method returns `this` for chaining. A single `await` at the start of the c
 | `check(label)` / `uncheck(label)` | Toggle checkbox by label |
 | `choose(label)` | Select radio button by label |
 | `submit()` | Submit the most recently interacted form (see below) |
-| `upload(label, path)` | Set a file input (found by label) to the file at `path` |
+| `attachFile(label, path)` | Set a file input (found by label) to the file at `path` |
 | `dropFile(selector, path)` | Dispatch a `DataTransfer` drop of the file onto a drop area |
+| `pressKey(key)` | Press a key on the focused control — `'Enter'`, `'Escape'`, `'Control+A'` |
+| `hover(text)` | Hover the element with this text |
+
+`upload(label, path)` is the former name of `attachFile` and still works, deprecated.
 
 #### Interactions address controls **exactly**
 
@@ -200,13 +204,17 @@ If no form was previously interacted with, `submit()` throws an error.
 
 ```ts
 // Standard file input, found by its label
-await session.upload("Avatar", "fixtures/avatar.png");
+await session.attachFile("Avatar", "fixtures/avatar.png");
 
 // Custom drop area (drag-and-drop upload zones)
 await session.dropFile("#dropzone", "fixtures/report.pdf");
 ```
 
 In Playwright, `dropFile` reads the real file and dispatches a `drop` event with a `DataTransfer`. In RTL (JSDOM has no filesystem), both verbs synthesize an empty `File` named after the path's basename — assert on the file name, not its contents.
+
+#### Keys
+
+`pressKey` names keys the Playwright way on both adapters: a single character types itself, a named key is `'Enter'` / `'Escape'` / `'ArrowDown'`, and modifiers combine with `+` (`'Control+A'`, `'Meta+Enter'`). The RTL adapter translates that to user-event's keyboard syntax, so one spec reads the same in both places. A prefix that is not `Control`, `Shift`, `Alt`, or `Meta` is rejected rather than typed as text.
 
 ### Assertions
 
@@ -219,6 +227,7 @@ In Playwright, `dropFile` reads the real file and dispatches a `drop` event with
 | `assertOptions(label, [labels])` | Assert a select offers exactly these options, in order |
 | `assertHas(selector, opts?)` / `refuteHas(...)` | Assert element exists (Playwright only, see options below) |
 | `assertPath(path, opts?)` / `refutePath(path)` | Assert URL path (Playwright only, see options below) |
+| `assertDownload(filename, trigger, opts?)` | Assert `trigger` starts a download with this filename (Playwright only) |
 
 #### Form-state assertions
 
@@ -293,6 +302,47 @@ await session.assertPath("/search", { queryParams: { q: "hello", page: "1" } });
 await session.refutePath("/login");
 ```
 
+#### Downloads
+
+The wait has to be armed before the click that starts the download, so the triggering steps go in a callback — the same shape as `within()`:
+
+```ts
+await session
+  .visit("/exports")
+  .assertDownload("report.csv", (s) => s.clickButton("Export"))
+  .assertText("Export complete");
+```
+
+`filename` is matched against the browser's suggested filename, exactly for a string or by `test()` for a `RegExp`. `opts.timeout` bounds the wait for the download to start. This is browser-only: the RTL adapter throws a `BrowserOnlyVerbError`, wrapped by the chain into a `StepError` that names the step.
+
+### Waiting: `until(description, fn)`
+
+| Method | Description |
+|--------|-------------|
+| `until(description, fn, opts?)` | Poll `fn` until it returns something truthy, then continue |
+
+Tests wait for conditions, not for clocks. `until()` is the honest alternative to a sleep: it polls a predicate you write, and the **mandatory** description is what the trace prints, so a timeout names the thing you were waiting for instead of the mechanism you waited with.
+
+```ts
+await session
+  .visit("/exports")
+  .clickButton("Export")
+  .until("the export job reports done", ({ page }) =>
+    page.evaluate(() => window.__exportDone),
+  )
+  .assertText("Download ready");
+```
+
+The predicate receives the adapter context — `{ page, scope }` for Playwright, `{ user, container }` for RTL — and may be sync or async. `opts` takes `{ timeout, interval }` in ms; omit them to inherit the adapter's own budget (Playwright's `expect.poll`, RTL's `waitFor`).
+
+When the budget runs out, the chain trace says what you were waiting for:
+
+```
+>>> [FAILED] until: the export job reports done
+```
+
+The description is required at the call site, before the chain runs — a blank one throws immediately, because a step named `until: ` teaches a reader nothing. The `feather-testing/no-wait-for-timeout` lint rule (see [Lint plugin](#lint-plugin)) points at this verb, so "no sleeps" stops being a review convention and becomes a check.
+
 ### Scoping
 
 | Method | Description |
@@ -309,7 +359,7 @@ await session
   .assertText("Dashboard"); // back to full-page scope after within()
 ```
 
-### Escape hatch: `step(name, fn)`
+### Escape hatches: `step(name, fn)` and `raw(label, fn)`
 
 When you need something the DSL doesn't cover, queue a named custom step instead of abandoning the chain. The callback receives the adapter's context — `{ page, scope }` for Playwright, `{ user, container }` for RTL — and the name shows up in `StepError` output like any built-in step:
 
@@ -321,6 +371,26 @@ await session
   })
   .assertText("Done (1)");
 ```
+
+`raw(label, fn)` goes one level lower: it hands over the driver itself — Playwright's `page`, RTL's scoped query object — with no context wrapper. Use it when you want the native API and nothing else:
+
+```ts
+await session
+  .visit("/board")
+  .raw("stub the clipboard", (page) =>
+    page.evaluate(() => navigator.clipboard.writeText("copied")),
+  )
+  .clickButton("Paste")
+  .assertText("copied");
+```
+
+Both hatches take a **mandatory** label and register as named steps, so a failure inside one still names intent:
+
+```
+>>> [FAILED] raw('stub the clipboard')
+```
+
+That is the whole point of having them: an untraced raw tail ends the trace at the last DSL verb, and no hatch at all pushes teams to abandon the DSL mid-spec. In Playwright, `raw` always hands over the page, not the `within()` scope — re-scoping is the caller's job once you have left the DSL.
 
 ### Debug
 
@@ -405,6 +475,9 @@ The RTL adapter runs in JSDOM, which has no real browser. These methods are not 
 - `visit()` — render the component directly instead
 - `assertPath()` / `refutePath()` — no URL in JSDOM
 - `assertHas()` / `refuteHas()` — RTL discourages CSS selectors; use `assertText()` instead
+- `assertDownload()` — JSDOM has no download machinery; it throws `BrowserOnlyVerbError` naming the verb and pointing at a Playwright spec
+
+The verbs JSDOM *can* honestly do, it does: `attachFile` synthesizes a `File` from the path's basename, `pressKey` translates to user-event's keyboard syntax, `hover` fires real pointer events, and `raw` hands over the scoped query object.
 
 ### Extending the RTL adapter
 
@@ -440,13 +513,21 @@ The third constructor argument is a per-lookup timeout in ms; omit it to keep RT
 
 ```ts
 // Core (Session class + types)
-import { Session, StepError, type TestDriver } from "feather-testing-core";
+import {
+  Session,
+  StepError,
+  BrowserOnlyVerbError,
+  type TestDriver,
+} from "feather-testing-core";
 
 // Playwright adapter
 import { test, createSession, expect } from "feather-testing-core/playwright";
 
 // RTL adapter
 import { createSession } from "feather-testing-core/rtl";
+
+// ESLint plugin (see below)
+import featherTesting from "feather-testing-core/eslint-plugin";
 ```
 
 Both adapter subpaths also re-export `Session` and `StepError`, so you can import everything from a single path:
@@ -455,6 +536,54 @@ Both adapter subpaths also re-export `Session` and `StepError`, so you can impor
 import { test, Session, StepError } from "feather-testing-core/playwright";
 import { createSession, Session, StepError } from "feather-testing-core/rtl";
 ```
+
+## Lint plugin
+
+The DSL can only offer good habits; a linter can insist on them. This package ships an ESLint plugin whose rules are the defect classes a real suite audit found by expensive reading — each one now a check that runs in a second, with a message that names the fix so whoever hits it (person or agent) learns the alternative from the error alone.
+
+```js
+// eslint.config.js — flat config
+import featherTesting from "feather-testing-core/eslint-plugin";
+
+export default [
+  {
+    files: ["tests/**/*.ts", "e2e/**/*.spec.ts"],
+    ...featherTesting.configs.recommended,
+  },
+];
+```
+
+Or wire the rules yourself:
+
+```js
+import featherTesting from "feather-testing-core/eslint-plugin";
+
+export default [
+  {
+    files: ["tests/**/*.ts"],
+    plugins: { "feather-testing": featherTesting },
+    rules: {
+      "feather-testing/no-weak-assertions": ["error", { matchers: ["toBeTruthy", "toBeDefined", "toBeFalsy"] }],
+    },
+  },
+];
+```
+
+| Rule | Catches | Points at |
+|------|---------|-----------|
+| `no-wait-for-timeout` | `page.waitForTimeout(...)`, and the `new Promise(r => setTimeout(r, n))` sleep idiom | `session.until(description, fn)`, `expect.poll`, web-first assertions |
+| `no-conditional-skip` | `test.skip(cond)`, `test.skip()`, `this.skip()` — a spec that un-tests itself at runtime | making the precondition part of the test, or `test.fixme` so the report names it |
+| `no-weak-assertions` | `expect(x).toBeTruthy()` / `.toBeDefined()` (configurable) | asserting the shape you mean |
+| `no-swallowed-cleanup-catch` | `.catch(() => {})` and empty `catch {}` blocks | asserting on the error, rethrowing with context, or annotating the deliberate ignore |
+| `warn-serial-mode` | `test.describe.serial(...)`, `configure({ mode: "serial" })` — warning, not error | independent tests, or an `eslint-disable` line saying why serial is required |
+
+Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-line` comment with a reason is exactly the annotation these rules are trying to force.
+
+**Why these five.** They are not style preferences. Each one is a way a suite goes green while proving nothing: a sleep passes on a slow machine and fails on a fast one, a conditional skip silently un-tests a spec for its entire life, `toBeTruthy()` accepts almost any value, a swallowed cleanup error surfaces three tests later as something else, and serial mode turns one failure into a wall of red that hides its own cause. `session.until()` exists so the first rule has an honest alternative to point at — see [the document set](docs/document-set.md) for why conventions belong in executable form rather than in a style guide nobody re-reads.
+
+## Documentation
+
+- [The document set](docs/document-set.md) — the minimal set of documents a project needs, what each one answers, and why hand-maintained cross-reference matrices lose to generated reports plus CI checks.
 
 ## License
 

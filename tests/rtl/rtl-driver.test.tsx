@@ -1,7 +1,9 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
-import { RTLDriver } from "../../src/rtl/driver.js";
+import { RTLDriver, toKeyboardSyntax } from "../../src/rtl/driver.js";
+import { createSession } from "../../src/rtl/index.js";
+import { BrowserOnlyVerbError, StepError } from "../../src/errors.js";
 
 afterEach(() => {
   cleanup();
@@ -214,6 +216,42 @@ function UploadApp() {
   );
 }
 
+function KeyboardApp() {
+  const [keys, setKeys] = useState<string[]>([]);
+  return (
+    <div>
+      <label htmlFor="cmd">Command</label>
+      <input
+        id="cmd"
+        onKeyDown={(e) =>
+          setKeys((k) => [...k, `${e.ctrlKey ? "Control+" : ""}${e.key}`])
+        }
+      />
+      <p>Keys: {keys.join(" ")}</p>
+    </div>
+  );
+}
+
+function HoverApp() {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div>
+      <span onMouseEnter={() => setHovered(true)}>Total</span>
+      {hovered && <p>Tooltip: 42 items</p>}
+    </div>
+  );
+}
+
+/** Flips from "Working" to "Ready" on its own, the way real async work does. */
+function EventuallyApp() {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setReady(true), 120);
+    return () => clearTimeout(id);
+  }, []);
+  return <p>{ready ? "Ready" : "Working"}</p>;
+}
+
 function DisappearingApp() {
   const [visible, setVisible] = useState(true);
   return (
@@ -241,7 +279,7 @@ describe("RTLDriver", () => {
       render(<LinksApp />);
       const driver = new RTLDriver();
       await driver.clickLink("About");
-      expect(screen.getByText("Clicked: about")).toBeTruthy();
+      expect(screen.getByText("Clicked: about").textContent).toContain("Clicked: about");
     });
   });
 
@@ -250,7 +288,7 @@ describe("RTLDriver", () => {
       render(<LinksApp />);
       const driver = new RTLDriver();
       await driver.clickButton("Action");
-      expect(screen.getByText("Clicked: action")).toBeTruthy();
+      expect(screen.getByText("Clicked: action").textContent).toContain("Clicked: action");
     });
   });
 
@@ -363,7 +401,7 @@ describe("RTLDriver", () => {
       const driver = new RTLDriver();
       await driver.fillIn("Value", "test");
       await driver.submit();
-      expect(screen.getByText("Done!")).toBeTruthy();
+      expect(screen.getByText("Done!").textContent).toContain("Done!");
     });
 
     it("finds submit button by type='submit'", async () => {
@@ -371,7 +409,7 @@ describe("RTLDriver", () => {
       const driver = new RTLDriver();
       await driver.fillIn("Value", "test");
       await driver.submit();
-      expect(screen.getByText("Done!")).toBeTruthy();
+      expect(screen.getByText("Done!").textContent).toContain("Done!");
     });
 
     it("falls back to requestSubmit when no submit button exists", async () => {
@@ -379,7 +417,7 @@ describe("RTLDriver", () => {
       const driver = new RTLDriver();
       await driver.fillIn("Value", "test");
       await driver.submit();
-      expect(screen.getByText("Done!")).toBeTruthy();
+      expect(screen.getByText("Done!").textContent).toContain("Done!");
     });
 
     it("throws when no form was previously interacted with", async () => {
@@ -395,16 +433,119 @@ describe("RTLDriver", () => {
       const driver = new RTLDriver();
       await driver.fillIn("Value", "test");
       await driver.submit();
-      expect(screen.getByText("Saved!")).toBeTruthy();
+      expect(screen.getByText("Saved!").textContent).toContain("Saved!");
     });
   });
 
-  describe("upload()", () => {
-    it("uploads a file to a file input by label", async () => {
+  describe("attachFile()", () => {
+    it("attaches a file to a file input by label", async () => {
+      render(<UploadApp />);
+      const driver = new RTLDriver();
+      await driver.attachFile("Avatar", "/some/dir/photo.png");
+      expect(screen.getByText("Uploaded: photo.png")).not.toBeNull();
+    });
+
+    it("upload() still works as the deprecated alias", async () => {
       render(<UploadApp />);
       const driver = new RTLDriver();
       await driver.upload("Avatar", "/some/dir/photo.png");
-      expect(screen.getByText("Uploaded: photo.png")).toBeTruthy();
+      expect(screen.getByText("Uploaded: photo.png")).not.toBeNull();
+    });
+  });
+
+  describe("pressKey()", () => {
+    it("presses a named key on the focused control", async () => {
+      render(<KeyboardApp />);
+      const driver = new RTLDriver();
+      await driver.fillIn("Command", "ls");
+      await driver.pressKey("Enter");
+      expect(screen.getByText(/Keys: l s Enter/)).not.toBeNull();
+    });
+
+    it("presses a modifier combination", async () => {
+      render(<KeyboardApp />);
+      const driver = new RTLDriver();
+      await driver.fillIn("Command", "");
+      await driver.pressKey("Control+a");
+      expect(screen.getByText(/Control\+a/)).not.toBeNull();
+    });
+
+    it("rejects a non-modifier prefix instead of typing it", async () => {
+      render(<KeyboardApp />);
+      const driver = new RTLDriver();
+      await expect(driver.pressKey("Bogus+a")).rejects.toThrow(
+        "is not a modifier",
+      );
+    });
+  });
+
+  describe("hover()", () => {
+    it("hovers the element with this text", async () => {
+      render(<HoverApp />);
+      const driver = new RTLDriver();
+      await driver.hover("Total");
+      expect(screen.getByText("Tooltip: 42 items")).not.toBeNull();
+    });
+  });
+
+  describe("raw()", () => {
+    it("hands the scoped query object to the callback", async () => {
+      render(<HoverApp />);
+      const driver = new RTLDriver();
+
+      let seen: string | null = null;
+      await driver.raw((queries) => {
+        seen = queries.getByText("Total").textContent;
+      });
+
+      expect(seen).toBe("Total");
+    });
+
+    it("scopes to the container inside within()", async () => {
+      render(<NestedScopeApp />);
+      const driver = new RTLDriver();
+      const main = await driver.within(".main");
+
+      await main.raw((queries) => {
+        expect(queries.getByText("Main panel")).not.toBeNull();
+        expect(queries.queryByText("Sidebar panel")).toBeNull();
+      });
+    });
+  });
+
+  describe("assertDownload()", () => {
+    it("throws a browser-only verb error", async () => {
+      const driver = new RTLDriver();
+      const error = await driver
+        .assertDownload("report.csv", async () => {})
+        .then(
+          () => null,
+          (e: unknown) => e as Error,
+        );
+
+      expect(error).toBeInstanceOf(BrowserOnlyVerbError);
+      expect(error?.message).toContain("browser-only verb");
+      expect(error?.message).toContain("assertDownload()");
+      expect(error?.message).toContain("Playwright spec");
+    });
+
+    it("surfaces through a Session as a named failed step", async () => {
+      render(<HoverApp />);
+      const session = createSession();
+
+      const error = await session
+        .assertText("Total")
+        .assertDownload("report.csv", (s) => s.click("Total"))
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+
+      expect(error).toBeInstanceOf(StepError);
+      expect(error?.message).toContain(
+        ">>> [FAILED] assertDownload('report.csv')",
+      );
+      expect(error?.message).toContain("browser-only verb");
     });
   });
 
@@ -413,7 +554,7 @@ describe("RTLDriver", () => {
       render(<UploadApp />);
       const driver = new RTLDriver();
       await driver.dropFile(".dropzone", "/some/dir/report.pdf");
-      expect(screen.getByText("Dropped: report.pdf")).toBeTruthy();
+      expect(screen.getByText("Dropped: report.pdf").textContent).toContain("Dropped: report.pdf");
     });
 
     it("throws when selector matches nothing", async () => {
@@ -524,8 +665,68 @@ describe("RTLDriver", () => {
         await user.click(await container.findByRole("button", { name: "Action" }));
       });
 
-      expect(receivedUser).toBeDefined();
-      expect(screen.getByText("Clicked: action")).toBeTruthy();
+      expect(typeof (receivedUser as { click?: unknown })?.click).toBe(
+        "function",
+      );
+      expect(screen.getByText("Clicked: action").textContent).toContain("Clicked: action");
+    });
+  });
+
+  describe("until()", () => {
+    it("polls until the condition holds", async () => {
+      render(<EventuallyApp />);
+      const driver = new RTLDriver();
+
+      await driver.until(
+        "the worker reports ready",
+        ({ container }) => container.queryByText("Ready") !== null,
+        { timeout: 2000 },
+      );
+
+      expect(screen.getByText("Ready")).not.toBeNull();
+    });
+
+    it("accepts an async predicate", async () => {
+      render(<EventuallyApp />);
+      const driver = new RTLDriver();
+
+      await driver.until(
+        "the worker reports ready",
+        async ({ container }) => container.queryByText("Ready"),
+        { timeout: 2000 },
+      );
+    });
+
+    it("names the awaited condition when the budget runs out", async () => {
+      render(<EventuallyApp />);
+      const driver = new RTLDriver();
+
+      await expect(
+        driver.until("the worker reports failure", () => false, {
+          timeout: 200,
+        }),
+      ).rejects.toThrow("until: the worker reports failure");
+    });
+
+    it("shows the description in the chain trace through a Session", async () => {
+      render(<EventuallyApp />);
+      const session = createSession();
+
+      const error = await session
+        .assertText("Working")
+        .until("the worker reports failure", () => false, { timeout: 200 })
+        .assertText("Ready")
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+
+      expect(error).toBeInstanceOf(StepError);
+      expect(error?.message).toContain("    [ok] assertText('Working')");
+      expect(error?.message).toContain(
+        ">>> [FAILED] until: the worker reports failure",
+      );
+      expect(error?.message).toContain("    [skipped] assertText('Ready')");
     });
   });
 
@@ -806,5 +1007,31 @@ describe("RTLDriver — findField() is the seam for a host adapter's markup", ()
     const scoped = await driver.within("form");
     await scoped.fillIn("Subject", "scoped");
     await scoped.assertValue("Subject", "scoped");
+  });
+});
+
+describe("toKeyboardSyntax()", () => {
+  it("wraps named keys and passes printable characters through", () => {
+    expect(toKeyboardSyntax("Enter")).toBe("{Enter}");
+    expect(toKeyboardSyntax("Escape")).toBe("{Escape}");
+    expect(toKeyboardSyntax("a")).toBe("a");
+    expect(toKeyboardSyntax("Space")).toBe(" ");
+  });
+
+  it("escapes user-event's own descriptor characters", () => {
+    expect(toKeyboardSyntax("{")).toBe("{{");
+    expect(toKeyboardSyntax("[")).toBe("[[");
+  });
+
+  it("holds modifiers around the key and releases them in reverse", () => {
+    expect(toKeyboardSyntax("Control+A")).toBe("{Control>}A{/Control}");
+    expect(toKeyboardSyntax("Ctrl+Shift+p")).toBe(
+      "{Control>}{Shift>}p{/Shift}{/Control}",
+    );
+    expect(toKeyboardSyntax("Meta+Enter")).toBe("{Meta>}{Enter}{/Meta}");
+  });
+
+  it("rejects a prefix that is not a modifier", () => {
+    expect(() => toKeyboardSyntax("Bogus+a")).toThrow("is not a modifier");
   });
 });

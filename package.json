@@ -1,6 +1,6 @@
 {
   "name": "feather-testing-core",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Phoenix Test-inspired fluent testing DSL for Playwright and React Testing Library",
   "license": "MIT",
   "repository": {
@@ -32,6 +32,11 @@
       "types": "./dist/rtl/index.d.ts",
       "import": "./dist/rtl/index.js",
       "default": "./dist/rtl/index.js"
+    },
+    "./eslint-plugin": {
+      "types": "./dist/eslint-plugin/index.d.ts",
+      "import": "./dist/eslint-plugin/index.js",
+      "default": "./dist/eslint-plugin/index.js"
     }
   },
   "files": [
@@ -57,7 +62,8 @@
     "build": "tsc",
     "test": "vitest run",
     "test:pw": "playwright test",
-    "test:all": "vitest run && playwright test"
+    "test:all": "vitest run && playwright test",
+    "lint": "npm run build && eslint ."
   },
   "devDependencies": {
     "@playwright/test": "^1.58.0",
@@ -67,6 +73,8 @@
     "@types/node": "^26.1.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@typescript-eslint/parser": "^8.68.0",
+    "eslint": "^9.39.5",
     "jsdom": "^28.1.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
