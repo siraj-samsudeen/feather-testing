@@ -279,7 +279,7 @@ describe("RTLDriver", () => {
       render(<LinksApp />);
       const driver = new RTLDriver();
       await driver.clickLink("About");
-      expect(screen.getByText("Clicked: about")).toBeTruthy();
+      expect(screen.getByText("Clicked: about").textContent).toContain("Clicked: about");
     });
   });
 
@@ -288,7 +288,7 @@ describe("RTLDriver", () => {
       render(<LinksApp />);
       const driver = new RTLDriver();
       await driver.clickButton("Action");
-      expect(screen.getByText("Clicked: action")).toBeTruthy();
+      expect(screen.getByText("Clicked: action").textContent).toContain("Clicked: action");
     });
   });
 
@@ -401,7 +401,7 @@ describe("RTLDriver", () => {
       const driver = new RTLDriver();
       await driver.fillIn("Value", "test");
       await driver.submit();
-      expect(screen.getByText("Done!")).toBeTruthy();
+      expect(screen.getByText("Done!").textContent).toContain("Done!");
     });
 
     it("finds submit button by type='submit'", async () => {
@@ -409,7 +409,7 @@ describe("RTLDriver", () => {
       const driver = new RTLDriver();
       await driver.fillIn("Value", "test");
       await driver.submit();
-      expect(screen.getByText("Done!")).toBeTruthy();
+      expect(screen.getByText("Done!").textContent).toContain("Done!");
     });
 
     it("falls back to requestSubmit when no submit button exists", async () => {
@@ -417,7 +417,7 @@ describe("RTLDriver", () => {
       const driver = new RTLDriver();
       await driver.fillIn("Value", "test");
       await driver.submit();
-      expect(screen.getByText("Done!")).toBeTruthy();
+      expect(screen.getByText("Done!").textContent).toContain("Done!");
     });
 
     it("throws when no form was previously interacted with", async () => {
@@ -433,7 +433,7 @@ describe("RTLDriver", () => {
       const driver = new RTLDriver();
       await driver.fillIn("Value", "test");
       await driver.submit();
-      expect(screen.getByText("Saved!")).toBeTruthy();
+      expect(screen.getByText("Saved!").textContent).toContain("Saved!");
     });
   });
 
@@ -554,7 +554,7 @@ describe("RTLDriver", () => {
       render(<UploadApp />);
       const driver = new RTLDriver();
       await driver.dropFile(".dropzone", "/some/dir/report.pdf");
-      expect(screen.getByText("Dropped: report.pdf")).toBeTruthy();
+      expect(screen.getByText("Dropped: report.pdf").textContent).toContain("Dropped: report.pdf");
     });
 
     it("throws when selector matches nothing", async () => {
@@ -665,8 +665,10 @@ describe("RTLDriver", () => {
         await user.click(await container.findByRole("button", { name: "Action" }));
       });
 
-      expect(receivedUser).toBeDefined();
-      expect(screen.getByText("Clicked: action")).toBeTruthy();
+      expect(typeof (receivedUser as { click?: unknown })?.click).toBe(
+        "function",
+      );
+      expect(screen.getByText("Clicked: action").textContent).toContain("Clicked: action");
     });
   });
 

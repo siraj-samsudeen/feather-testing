@@ -154,8 +154,10 @@ describe("Session", () => {
       // No await — just chain
       session.visit("/").clickButton("Go");
 
-      // Wait a tick to make sure nothing ran
-      await new Promise((r) => setTimeout(r, 10));
+      // Let every pending microtask run: the queue only executes on await,
+      // so if anything were going to fire on its own it would have by now.
+      await Promise.resolve();
+      await Promise.resolve();
       expect(calls).toEqual([]);
     });
 

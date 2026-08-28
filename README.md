@@ -525,6 +525,9 @@ import { test, createSession, expect } from "feather-testing-core/playwright";
 
 // RTL adapter
 import { createSession } from "feather-testing-core/rtl";
+
+// ESLint plugin (see below)
+import featherTesting from "feather-testing-core/eslint-plugin";
 ```
 
 Both adapter subpaths also re-export `Session` and `StepError`, so you can import everything from a single path:
@@ -533,6 +536,54 @@ Both adapter subpaths also re-export `Session` and `StepError`, so you can impor
 import { test, Session, StepError } from "feather-testing-core/playwright";
 import { createSession, Session, StepError } from "feather-testing-core/rtl";
 ```
+
+## Lint plugin
+
+The DSL can only offer good habits; a linter can insist on them. This package ships an ESLint plugin whose rules are the defect classes a real suite audit found by expensive reading — each one now a check that runs in a second, with a message that names the fix so whoever hits it (person or agent) learns the alternative from the error alone.
+
+```js
+// eslint.config.js — flat config
+import featherTesting from "feather-testing-core/eslint-plugin";
+
+export default [
+  {
+    files: ["tests/**/*.ts", "e2e/**/*.spec.ts"],
+    ...featherTesting.configs.recommended,
+  },
+];
+```
+
+Or wire the rules yourself:
+
+```js
+import featherTesting from "feather-testing-core/eslint-plugin";
+
+export default [
+  {
+    files: ["tests/**/*.ts"],
+    plugins: { "feather-testing": featherTesting },
+    rules: {
+      "feather-testing/no-weak-assertions": ["error", { matchers: ["toBeTruthy", "toBeDefined", "toBeFalsy"] }],
+    },
+  },
+];
+```
+
+| Rule | Catches | Points at |
+|------|---------|-----------|
+| `no-wait-for-timeout` | `page.waitForTimeout(...)`, and the `new Promise(r => setTimeout(r, n))` sleep idiom | `session.until(description, fn)`, `expect.poll`, web-first assertions |
+| `no-conditional-skip` | `test.skip(cond)`, `test.skip()`, `this.skip()` — a spec that un-tests itself at runtime | making the precondition part of the test, or `test.fixme` so the report names it |
+| `no-weak-assertions` | `expect(x).toBeTruthy()` / `.toBeDefined()` (configurable) | asserting the shape you mean |
+| `no-swallowed-cleanup-catch` | `.catch(() => {})` and empty `catch {}` blocks | asserting on the error, rethrowing with context, or annotating the deliberate ignore |
+| `warn-serial-mode` | `test.describe.serial(...)`, `configure({ mode: "serial" })` — warning, not error | independent tests, or an `eslint-disable` line saying why serial is required |
+
+Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-line` comment with a reason is exactly the annotation these rules are trying to force.
+
+**Why these five.** They are not style preferences. Each one is a way a suite goes green while proving nothing: a sleep passes on a slow machine and fails on a fast one, a conditional skip silently un-tests a spec for its entire life, `toBeTruthy()` accepts almost any value, a swallowed cleanup error surfaces three tests later as something else, and serial mode turns one failure into a wall of red that hides its own cause. `session.until()` exists so the first rule has an honest alternative to point at — see [the document set](docs/document-set.md) for why conventions belong in executable form rather than in a style guide nobody re-reads.
+
+## Documentation
+
+- [The document set](docs/document-set.md) — the minimal set of documents a project needs, what each one answers, and why hand-maintained cross-reference matrices lose to generated reports plus CI checks.
 
 ## License
 

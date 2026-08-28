@@ -497,7 +497,9 @@ test.describe("PlaywrightDriver", () => {
       await driver.visit("/scoped");
 
       const scoped: TestDriver = await driver.within(".sidebar");
-      expect(scoped).toBeDefined();
+      // A driver, not just something: it answers the DSL's own questions.
+      await scoped.assertText("Sidebar content");
+      await expect(scoped.assertText("Main content")).rejects.toThrow();
     });
   });
 
