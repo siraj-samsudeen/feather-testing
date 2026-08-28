@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
-import { RTLDriver } from "../../src/rtl/driver.js";
+import { RTLDriver, toKeyboardSyntax } from "../../src/rtl/driver.js";
 import { createSession } from "../../src/rtl/index.js";
-import { StepError } from "../../src/errors.js";
+import { BrowserOnlyVerbError, StepError } from "../../src/errors.js";
 
 afterEach(() => {
   cleanup();
@@ -216,6 +216,32 @@ function UploadApp() {
   );
 }
 
+function KeyboardApp() {
+  const [keys, setKeys] = useState<string[]>([]);
+  return (
+    <div>
+      <label htmlFor="cmd">Command</label>
+      <input
+        id="cmd"
+        onKeyDown={(e) =>
+          setKeys((k) => [...k, `${e.ctrlKey ? "Control+" : ""}${e.key}`])
+        }
+      />
+      <p>Keys: {keys.join(" ")}</p>
+    </div>
+  );
+}
+
+function HoverApp() {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div>
+      <span onMouseEnter={() => setHovered(true)}>Total</span>
+      {hovered && <p>Tooltip: 42 items</p>}
+    </div>
+  );
+}
+
 /** Flips from "Working" to "Ready" on its own, the way real async work does. */
 function EventuallyApp() {
   const [ready, setReady] = useState(false);
@@ -411,12 +437,115 @@ describe("RTLDriver", () => {
     });
   });
 
-  describe("upload()", () => {
-    it("uploads a file to a file input by label", async () => {
+  describe("attachFile()", () => {
+    it("attaches a file to a file input by label", async () => {
+      render(<UploadApp />);
+      const driver = new RTLDriver();
+      await driver.attachFile("Avatar", "/some/dir/photo.png");
+      expect(screen.getByText("Uploaded: photo.png")).not.toBeNull();
+    });
+
+    it("upload() still works as the deprecated alias", async () => {
       render(<UploadApp />);
       const driver = new RTLDriver();
       await driver.upload("Avatar", "/some/dir/photo.png");
-      expect(screen.getByText("Uploaded: photo.png")).toBeTruthy();
+      expect(screen.getByText("Uploaded: photo.png")).not.toBeNull();
+    });
+  });
+
+  describe("pressKey()", () => {
+    it("presses a named key on the focused control", async () => {
+      render(<KeyboardApp />);
+      const driver = new RTLDriver();
+      await driver.fillIn("Command", "ls");
+      await driver.pressKey("Enter");
+      expect(screen.getByText(/Keys: l s Enter/)).not.toBeNull();
+    });
+
+    it("presses a modifier combination", async () => {
+      render(<KeyboardApp />);
+      const driver = new RTLDriver();
+      await driver.fillIn("Command", "");
+      await driver.pressKey("Control+a");
+      expect(screen.getByText(/Control\+a/)).not.toBeNull();
+    });
+
+    it("rejects a non-modifier prefix instead of typing it", async () => {
+      render(<KeyboardApp />);
+      const driver = new RTLDriver();
+      await expect(driver.pressKey("Bogus+a")).rejects.toThrow(
+        "is not a modifier",
+      );
+    });
+  });
+
+  describe("hover()", () => {
+    it("hovers the element with this text", async () => {
+      render(<HoverApp />);
+      const driver = new RTLDriver();
+      await driver.hover("Total");
+      expect(screen.getByText("Tooltip: 42 items")).not.toBeNull();
+    });
+  });
+
+  describe("raw()", () => {
+    it("hands the scoped query object to the callback", async () => {
+      render(<HoverApp />);
+      const driver = new RTLDriver();
+
+      let seen: string | null = null;
+      await driver.raw((queries) => {
+        seen = queries.getByText("Total").textContent;
+      });
+
+      expect(seen).toBe("Total");
+    });
+
+    it("scopes to the container inside within()", async () => {
+      render(<NestedScopeApp />);
+      const driver = new RTLDriver();
+      const main = await driver.within(".main");
+
+      await main.raw((queries) => {
+        expect(queries.getByText("Main panel")).not.toBeNull();
+        expect(queries.queryByText("Sidebar panel")).toBeNull();
+      });
+    });
+  });
+
+  describe("assertDownload()", () => {
+    it("throws a browser-only verb error", async () => {
+      const driver = new RTLDriver();
+      const error = await driver
+        .assertDownload("report.csv", async () => {})
+        .then(
+          () => null,
+          (e: unknown) => e as Error,
+        );
+
+      expect(error).toBeInstanceOf(BrowserOnlyVerbError);
+      expect(error?.message).toContain("browser-only verb");
+      expect(error?.message).toContain("assertDownload()");
+      expect(error?.message).toContain("Playwright spec");
+    });
+
+    it("surfaces through a Session as a named failed step", async () => {
+      render(<HoverApp />);
+      const session = createSession();
+
+      const error = await session
+        .assertText("Total")
+        .assertDownload("report.csv", (s) => s.click("Total"))
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+
+      expect(error).toBeInstanceOf(StepError);
+      expect(error?.message).toContain(
+        ">>> [FAILED] assertDownload('report.csv')",
+      );
+      expect(error?.message).toContain("browser-only verb");
     });
   });
 
@@ -876,5 +1005,31 @@ describe("RTLDriver — findField() is the seam for a host adapter's markup", ()
     const scoped = await driver.within("form");
     await scoped.fillIn("Subject", "scoped");
     await scoped.assertValue("Subject", "scoped");
+  });
+});
+
+describe("toKeyboardSyntax()", () => {
+  it("wraps named keys and passes printable characters through", () => {
+    expect(toKeyboardSyntax("Enter")).toBe("{Enter}");
+    expect(toKeyboardSyntax("Escape")).toBe("{Escape}");
+    expect(toKeyboardSyntax("a")).toBe("a");
+    expect(toKeyboardSyntax("Space")).toBe(" ");
+  });
+
+  it("escapes user-event's own descriptor characters", () => {
+    expect(toKeyboardSyntax("{")).toBe("{{");
+    expect(toKeyboardSyntax("[")).toBe("[[");
+  });
+
+  it("holds modifiers around the key and releases them in reverse", () => {
+    expect(toKeyboardSyntax("Control+A")).toBe("{Control>}A{/Control}");
+    expect(toKeyboardSyntax("Ctrl+Shift+p")).toBe(
+      "{Control>}{Shift>}p{/Shift}{/Control}",
+    );
+    expect(toKeyboardSyntax("Meta+Enter")).toBe("{Meta>}{Enter}{/Meta}");
+  });
+
+  it("rejects a prefix that is not a modifier", () => {
+    expect(() => toKeyboardSyntax("Bogus+a")).toThrow("is not a modifier");
   });
 });

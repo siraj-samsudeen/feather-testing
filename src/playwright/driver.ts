@@ -4,6 +4,7 @@ import { type Page, type Locator, expect, test } from "@playwright/test";
 import type {
   AssertHasOptions,
   AssertPathOptions,
+  DownloadOptions,
   TestDriver,
   UntilOptions,
   UntilPredicate,
@@ -32,7 +33,9 @@ export interface PlaywrightStepContext {
  */
 const EXACT = { exact: true } as const;
 
-export class PlaywrightDriver implements TestDriver<PlaywrightStepContext> {
+export class PlaywrightDriver
+  implements TestDriver<PlaywrightStepContext, Page>
+{
   private lastFormLocator: Locator | null = null;
 
   constructor(
@@ -130,10 +133,23 @@ export class PlaywrightDriver implements TestDriver<PlaywrightStepContext> {
     }
   }
 
-  async upload(label: string, path: string): Promise<void> {
+  async attachFile(label: string, path: string): Promise<void> {
     const input = this.labelled(label);
     await input.setInputFiles(path);
     this.lastFormLocator = this.scope.locator("form", { has: input });
+  }
+
+  /** @deprecated Older name for {@link PlaywrightDriver.attachFile}. */
+  async upload(label: string, path: string): Promise<void> {
+    await this.attachFile(label, path);
+  }
+
+  async pressKey(key: string): Promise<void> {
+    await this.page.keyboard.press(key);
+  }
+
+  async hover(text: string): Promise<void> {
+    await this.scope.getByText(text, EXACT).hover();
   }
 
   async dropFile(selector: string, path: string): Promise<void> {
@@ -228,6 +244,31 @@ export class PlaywrightDriver implements TestDriver<PlaywrightStepContext> {
       .not.toBe(path);
   }
 
+  async assertDownload(
+    expected: string | RegExp,
+    trigger: () => Promise<void>,
+    opts?: DownloadOptions,
+  ): Promise<void> {
+    // The wait has to be armed before the click that starts the download,
+    // which is why the trigger arrives as a callback rather than as an
+    // earlier step in the chain.
+    const [download] = await Promise.all([
+      this.page.waitForEvent("download", { timeout: opts?.timeout }),
+      trigger(),
+    ]);
+    const filename = download.suggestedFilename();
+    const matched =
+      typeof expected === "string"
+        ? filename === expected
+        : expected.test(filename);
+    if (!matched) {
+      throw new Error(
+        `assertDownload(${typeof expected === "string" ? `'${expected}'` : String(expected)}): ` +
+          `the browser offered a download named '${filename}' instead.`,
+      );
+    }
+  }
+
   async until(
     description: string,
     predicate: UntilPredicate<PlaywrightStepContext>,
@@ -248,12 +289,22 @@ export class PlaywrightDriver implements TestDriver<PlaywrightStepContext> {
     await fn(this.context());
   }
 
+  /**
+   * raw() hands over the page itself, not the within() scope: it exists for
+   * the cases the DSL does not model, where re-scoping is the caller's job.
+   */
+  async raw(fn: (page: Page) => unknown | Promise<unknown>): Promise<void> {
+    await fn(this.page);
+  }
+
   /** The adapter context handed to step(), until(), and friends. */
   protected context(): PlaywrightStepContext {
     return { page: this.page, scope: this.scope };
   }
 
-  async within(selector: string): Promise<TestDriver<PlaywrightStepContext>> {
+  async within(
+    selector: string,
+  ): Promise<TestDriver<PlaywrightStepContext, Page>> {
     const scopedLocator = this.scope.locator(selector);
     await expect(scopedLocator).toBeAttached();
     return new PlaywrightDriver(this.page, scopedLocator);

@@ -31,8 +31,11 @@ function createMockDriver(overrides?: Partial<TestDriver>): {
     uncheck: vi.fn(handler("uncheck")),
     choose: vi.fn(handler("choose")),
     submit: vi.fn(handler("submit")),
+    attachFile: vi.fn(handler("attachFile")),
     upload: vi.fn(handler("upload")),
     dropFile: vi.fn(handler("dropFile")),
+    pressKey: vi.fn(handler("pressKey")),
+    hover: vi.fn(handler("hover")),
     assertText: vi.fn(handler("assertText")),
     refuteText: vi.fn(handler("refuteText")),
     assertValue: vi.fn(handler("assertValue")),
@@ -44,6 +47,16 @@ function createMockDriver(overrides?: Partial<TestDriver>): {
     refuteHas: vi.fn(handler("refuteHas")),
     assertPath: vi.fn(handler("assertPath")),
     refutePath: vi.fn(handler("refutePath")),
+    assertDownload: vi.fn(
+      async (expected: string | RegExp, trigger: () => Promise<void>) => {
+        calls.push(`assertDownload(${JSON.stringify(String(expected))})`);
+        await trigger();
+      },
+    ),
+    raw: vi.fn(async (fn: (native: unknown) => unknown) => {
+      calls.push("raw");
+      await fn({ native: true });
+    }),
     until: vi.fn(
       async (description: string, predicate: (c: unknown) => unknown) => {
         calls.push(`until(${JSON.stringify(description)})`);
@@ -89,8 +102,11 @@ describe("Session", () => {
         .uncheck("label")
         .choose("label")
         .submit()
+        .attachFile("label", "path.txt")
         .upload("label", "path.txt")
         .dropFile(".zone", "path.txt")
+        .pressKey("Enter")
+        .hover("text")
         .assertText("text")
         .refuteText("text")
         .assertValue("label", "value")
@@ -104,6 +120,7 @@ describe("Session", () => {
         .refutePath("/path")
         .until("the page settles", () => true)
         .step("custom", async () => {})
+        .raw("native poke", async () => {})
         .debug();
 
       // result is the same session (not yet awaited)
@@ -403,6 +420,124 @@ describe("Session", () => {
         const msg = (e as StepError).message;
         expect(msg).toContain(">>> [FAILED] step('drag the card')");
         expect(msg).toContain("Cause: drag failed");
+      }
+    });
+  });
+
+  describe("raw() escape hatch", () => {
+    it("hands the driver's native handle to the callback", async () => {
+      const { driver, calls } = createMockDriver();
+      const session = new Session(driver);
+
+      let received: unknown;
+      await session.raw("poke the page", (native) => {
+        received = native;
+      });
+
+      expect(received).toEqual({ native: true });
+      expect(calls).toEqual(["raw"]);
+    });
+
+    it("registers as a named step in the chain trace", async () => {
+      const { driver } = createMockDriver();
+      const session = new Session(driver);
+
+      try {
+        await session
+          .visit("/")
+          .raw("drag the card to Done", () => {
+            throw new Error("drag failed");
+          })
+          .assertText("Done (1)");
+        expect.fail("should have thrown");
+      } catch (e) {
+        const msg = (e as StepError).message;
+        expect(msg).toContain("    [ok] visit('/')");
+        expect(msg).toContain(">>> [FAILED] raw('drag the card to Done')");
+        expect(msg).toContain("    [skipped] assertText('Done (1)')");
+        expect(msg).toContain("Cause: drag failed");
+      }
+    });
+
+    it("rejects a missing or blank label at the call site", () => {
+      const { driver } = createMockDriver();
+      const session = new Session(driver);
+
+      expect(() => session.raw("", () => {})).toThrow(
+        /raw\(\) requires a non-empty description/,
+      );
+    });
+  });
+
+  describe("new verbs", () => {
+    it("attachFile goes straight to the driver", async () => {
+      const { driver, calls } = createMockDriver();
+      await new Session(driver).attachFile("Avatar", "photo.png");
+
+      expect(driver.attachFile).toHaveBeenCalledWith("Avatar", "photo.png");
+      expect(calls).toEqual(['attachFile("Avatar", "photo.png")']);
+    });
+
+    it("upload stays as a deprecated alias for attachFile", async () => {
+      const { driver } = createMockDriver();
+      await new Session(driver).upload("Avatar", "photo.png");
+
+      expect(driver.upload).toHaveBeenCalledWith("Avatar", "photo.png");
+    });
+
+    it("upload falls back to attachFile on drivers that dropped it", async () => {
+      const { driver } = createMockDriver();
+      delete (driver as { upload?: unknown }).upload;
+
+      await new Session(driver).upload("Avatar", "photo.png");
+
+      expect(driver.attachFile).toHaveBeenCalledWith("Avatar", "photo.png");
+    });
+
+    it("pressKey and hover name their target in the trace", async () => {
+      const { driver, calls } = createMockDriver();
+      await new Session(driver).pressKey("Control+A").hover("Total");
+
+      expect(calls).toEqual(['pressKey("Control+A")', 'hover("Total")']);
+    });
+
+    it("assertDownload runs the trigger against the same driver", async () => {
+      const { driver, calls } = createMockDriver();
+      const session = new Session(driver);
+
+      await session.assertDownload("report.csv", (s) =>
+        s.clickButton("Export"),
+      );
+
+      expect(calls).toEqual([
+        'assertDownload("report.csv")',
+        'clickButton("Export")',
+      ]);
+      expect(driver.assertDownload).toHaveBeenCalledWith(
+        "report.csv",
+        expect.any(Function),
+        undefined,
+      );
+    });
+
+    it("assertDownload names the expectation in the trace when it fails", async () => {
+      const { driver } = createMockDriver({
+        assertDownload: vi.fn(async () => {
+          throw new Error("no download started");
+        }),
+      });
+
+      try {
+        await new Session(driver).assertDownload(/report-\d+\.csv/, (s) =>
+          s.clickButton("Export"),
+        );
+        expect.fail("should have thrown");
+      } catch (e) {
+        const msg = (e as StepError).message;
+        expect(msg).toContain(
+          ">>> [FAILED] assertDownload('/report-\\d+\\.csv/')",
+        );
+        expect(msg).toContain("Cause: no download started");
       }
     });
   });

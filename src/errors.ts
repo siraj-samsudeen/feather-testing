@@ -33,3 +33,18 @@ export class StepError extends Error {
     this.name = "StepError";
   }
 }
+
+/**
+ * Thrown by an adapter asked for something only a real browser can do.
+ * A session wraps it in a StepError, so the chain trace names the verb that
+ * could not run and this message says why and what to do instead.
+ */
+export class BrowserOnlyVerbError extends Error {
+  constructor(verb: string, alternative: string) {
+    super(
+      `feather-testing-core: ${verb} is a browser-only verb — this adapter runs ` +
+        `in JSDOM, which has no browser to do it. ${alternative}`,
+    );
+    this.name = "BrowserOnlyVerbError";
+  }
+}

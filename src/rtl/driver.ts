@@ -7,10 +7,15 @@ import {
 import userEvent, { type UserEvent } from "@testing-library/user-event";
 import type {
   AssertHasOptions,
+  DownloadOptions,
   TestDriver,
   UntilOptions,
   UntilPredicate,
 } from "../types.js";
+import { BrowserOnlyVerbError } from "../errors.js";
+
+/** The scoped query object raw() callbacks receive in the RTL adapter. */
+export type RTLQueries = ReturnType<typeof rtlWithin>;
 
 /** Context handed to custom step() callbacks in the RTL adapter. */
 export interface RTLStepContext {
@@ -36,7 +41,7 @@ type ValueElement =
  * driver to markup whose labels are wrapper siblings rather than `htmlFor`
  * targets.
  */
-export class RTLDriver implements TestDriver<RTLStepContext> {
+export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
   protected user: UserEvent;
   /** The element every query and selector in this driver resolves against. */
   protected root: HTMLElement;
@@ -82,7 +87,7 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
   }
 
   /** Subclasses override this so within() yields a driver of their own type. */
-  protected scoped(element: HTMLElement): TestDriver<RTLStepContext> {
+  protected scoped(element: HTMLElement): TestDriver<RTLStepContext, RTLQueries> {
     return new RTLDriver(this.user, element, this.timeout);
   }
 
@@ -188,13 +193,36 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
     }
   }
 
-  async upload(label: string, path: string): Promise<void> {
+  async attachFile(label: string, path: string): Promise<void> {
     const input = await this.findField(label);
     // JSDOM has no filesystem access; synthesize a File from the basename.
     const name = path.split(/[\\/]/).pop() ?? path;
     const file = new File([""], name);
     await this.user.upload(input as HTMLInputElement, file);
     this.lastFormElement = input.closest("form");
+  }
+
+  /** @deprecated Older name for {@link RTLDriver.attachFile}. */
+  async upload(label: string, path: string): Promise<void> {
+    await this.attachFile(label, path);
+  }
+
+  /**
+   * Keys are named the Playwright way ('Enter', 'Control+A') and translated
+   * to user-event's keyboard syntax, so one spec reads the same on both
+   * adapters.
+   */
+  async pressKey(key: string): Promise<void> {
+    await this.user.keyboard(toKeyboardSyntax(key));
+  }
+
+  async hover(text: string): Promise<void> {
+    const element = await this.container.findByText(
+      text,
+      undefined,
+      this.waitOpts(),
+    );
+    await this.user.hover(element);
   }
 
   async dropFile(selector: string, path: string): Promise<void> {
@@ -321,6 +349,18 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
     );
   }
 
+  async assertDownload(
+    _expected: string | RegExp,
+    _trigger: () => Promise<void>,
+    _opts?: DownloadOptions,
+  ): Promise<void> {
+    throw new BrowserOnlyVerbError(
+      "assertDownload()",
+      "Assert the request the download would make, or move this case to a " +
+        "Playwright spec where a real browser can accept the file.",
+    );
+  }
+
   async until(
     description: string,
     predicate: UntilPredicate<RTLStepContext>,
@@ -346,12 +386,22 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
     await fn(this.context());
   }
 
+  /** raw() hands over the scoped query object — `within(root)`, i.e. screen
+   * when the driver is unscoped. */
+  async raw(
+    fn: (queries: RTLQueries) => unknown | Promise<unknown>,
+  ): Promise<void> {
+    await fn(this.container);
+  }
+
   /** The adapter context handed to step(), until(), and friends. */
   protected context(): RTLStepContext {
     return { user: this.user, container: this.container };
   }
 
-  async within(selector: string): Promise<TestDriver<RTLStepContext>> {
+  async within(
+    selector: string,
+  ): Promise<TestDriver<RTLStepContext, RTLQueries>> {
     const element = this.rootElement().querySelector(selector);
     if (!element) throw new Error(`within('${selector}'): element not found`);
     return this.scoped(element as HTMLElement);
@@ -360,4 +410,47 @@ export class RTLDriver implements TestDriver<RTLStepContext> {
   async debug(): Promise<void> {
     screen.debug(this.rootElement());
   }
+}
+
+/** Playwright key names -> user-event keyboard syntax. */
+const KEY_ALIASES: Record<string, string> = {
+  Ctrl: "Control",
+  Cmd: "Meta",
+  Command: "Meta",
+  Space: " ",
+};
+
+const MODIFIERS = new Set(["Control", "Shift", "Alt", "Meta"]);
+
+/**
+ * 'Enter' -> '{Enter}', 'a' -> 'a', 'Control+A' -> '{Control>}A{/Control}'.
+ * Printable characters are typed literally with user-event's own `{` and `[`
+ * escapes applied, so a key name never turns into a descriptor by accident.
+ */
+export function toKeyboardSyntax(key: string): string {
+  const parts = key.split("+").map((p) => KEY_ALIASES[p] ?? p);
+  const target = parts.pop();
+  if (target === undefined || target === "") {
+    throw new Error(`pressKey('${key}'): no key to press.`);
+  }
+  const held = parts.filter((p) => MODIFIERS.has(p));
+  if (held.length !== parts.length) {
+    throw new Error(
+      `pressKey('${key}'): '${parts.find((p) => !MODIFIERS.has(p))}' is not a ` +
+        "modifier. Use Control, Shift, Alt, or Meta.",
+    );
+  }
+  const pressed =
+    target.length === 1
+      ? target.replace(/[{[]/g, (c) => c + c)
+      : `{${target}}`;
+  return (
+    held.map((m) => `{${m}>}`).join("") +
+    pressed +
+    held
+      .slice()
+      .reverse()
+      .map((m) => `{/${m}}`)
+      .join("")
+  );
 }

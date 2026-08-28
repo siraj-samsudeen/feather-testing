@@ -698,3 +698,150 @@ test.describe("until()", () => {
       );
   });
 });
+
+test.describe("new verbs", () => {
+  test("attachFile sets a file input found by label", async ({ page }) => {
+    const driver = new PlaywrightDriver(page);
+    await driver.visit("/upload");
+    await driver.attachFile("Avatar", "tests/playwright/fixtures.ts");
+    await expect(page.locator("#uploaded")).toContainText(
+      "Uploaded: fixtures.ts",
+    );
+  });
+
+  test("upload stays as the deprecated alias", async ({ page }) => {
+    const driver = new PlaywrightDriver(page);
+    await driver.visit("/upload");
+    await driver.upload("Avatar", "tests/playwright/fixtures.ts");
+    await expect(page.locator("#uploaded")).toContainText(
+      "Uploaded: fixtures.ts",
+    );
+  });
+
+  test("pressKey presses a named key on the focused control", async ({
+    page,
+  }) => {
+    const driver = new PlaywrightDriver(page);
+    await driver.visit("/keys");
+    await driver.fillIn("Command", "ls");
+    // fillIn() sets the value outright rather than typing it, so the only
+    // keydown the page ever sees is the one pressKey() sends.
+    await driver.pressKey("Enter");
+    await expect(page.locator("#keys")).toHaveText("Keys: Enter");
+  });
+
+  test("pressKey presses a modifier combination", async ({ page }) => {
+    const driver = new PlaywrightDriver(page);
+    await driver.visit("/keys");
+    await driver.fillIn("Command", "");
+    await driver.pressKey("Control+a");
+    await expect(page.locator("#keys")).toContainText("Control+a");
+  });
+
+  test("hover hovers the element with this text", async ({ page }) => {
+    const driver = new PlaywrightDriver(page);
+    await driver.visit("/hover");
+    await driver.hover("Total");
+    await expect(page.locator("#tooltip")).toHaveText("Tooltip: 42 items");
+  });
+
+  test("assertDownload passes when the trigger starts the named download", async ({
+    page,
+  }) => {
+    const session = new Session(new PlaywrightDriver(page));
+    await session
+      .visit("/download")
+      .assertDownload("report.csv", (s) => s.clickButton("Export"))
+      .assertText("Exports");
+  });
+
+  test("assertDownload accepts a regex filename", async ({ page }) => {
+    const session = new Session(new PlaywrightDriver(page));
+    await session
+      .visit("/download")
+      .assertDownload(/^report\.\w+$/, (s) => s.clickButton("Export"));
+  });
+
+  test("assertDownload fails, named, when the file is not the expected one", async ({
+    page,
+  }) => {
+    const session = new Session(new PlaywrightDriver(page));
+    try {
+      await session
+        .visit("/download")
+        .assertDownload("invoice.pdf", (s) => s.clickButton("Export"));
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(StepError);
+      const msg = (e as StepError).message;
+      expect(msg).toContain(">>> [FAILED] assertDownload('invoice.pdf')");
+      expect(msg).toContain("offered a download named 'report.csv'");
+    }
+  });
+
+  test("assertDownload fails when no download starts", async ({ page }) => {
+    const session = new Session(new PlaywrightDriver(page));
+    try {
+      await session
+        .visit("/download")
+        .assertDownload("report.csv", (s) => s.clickButton("Do nothing"), {
+          timeout: 1000,
+        });
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(StepError);
+      expect((e as StepError).message).toContain(
+        ">>> [FAILED] assertDownload('report.csv')",
+      );
+    }
+  });
+});
+
+test.describe("raw()", () => {
+  test("hands the page to the callback and stays in the chain", async ({
+    page,
+  }) => {
+    const session = new Session(new PlaywrightDriver(page));
+    await session
+      .visit("/form")
+      .raw("type into the name field directly", async (p) => {
+        await p.getByLabel("Name").fill("via raw");
+      })
+      .assertValue("Name", "via raw");
+  });
+
+  test("a failed raw step names its label in the chain trace", async ({
+    page,
+  }) => {
+    const session = new Session(new PlaywrightDriver(page));
+    try {
+      await session
+        .visit("/form")
+        .raw("drag the card to Done", async () => {
+          throw new Error("drag failed");
+        })
+        .assertText("Done (1)");
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(StepError);
+      const msg = (e as StepError).message;
+      expect(msg).toContain("[ok] visit('/form')");
+      expect(msg).toContain(">>> [FAILED] raw('drag the card to Done')");
+      expect(msg).toContain("[skipped] assertText('Done (1)')");
+      expect(msg).toContain("Cause: drag failed");
+    }
+  });
+
+  test("raw hands over the page even inside within()", async ({ page }) => {
+    const session = new Session(new PlaywrightDriver(page));
+    await session
+      .visit("/scoped")
+      .within(".main", (s) =>
+        s.raw("read the sidebar the DSL scoped away", async (p) => {
+          expect(await p.locator(".sidebar p").textContent()).toBe(
+            "Sidebar content",
+          );
+        }),
+      );
+  });
+});
