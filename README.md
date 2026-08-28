@@ -172,6 +172,20 @@ Every method returns `this` for chaining. A single `await` at the start of the c
 | `upload(label, path)` | Set a file input (found by label) to the file at `path` |
 | `dropFile(selector, path)` | Dispatch a `DataTransfer` drop of the file onto a drop area |
 
+#### Interactions address controls **exactly**
+
+Every interaction above names the control it wants, and that name is matched in full: `clickButton("Check")` clicks the button named *Check*, never the sidebar chip named *"Checklist Run — checklist"*. Whitespace is still normalized, so multi-line markup and padded labels keep working.
+
+This matters because Playwright's bare-string matchers are case-insensitive *substring* matchers. Left as-is, a verb aimed at one control silently widens to any other control whose name merely contains the same text — and the run dies on a strict-mode violation that only appears when both are on screen at once, which turns a naming collision into an ordering-dependent flake. RTL matches whole strings by default, so with this both adapters answer the same question.
+
+Assertions are the deliberate exception: `assertText` / `refuteText` / `assertHas` ask *"does this text appear"*, so they stay substring matches. An exact `refuteText("Check")` would pass while *Checklist Run* is plainly on the page.
+
+To act on a control whose name is genuinely a prefix of another's, scope the lookup rather than loosening it:
+
+```ts
+await session.within("main", (s) => s.clickButton("Check"));
+```
+
 #### How `submit()` finds the submit button
 
 `submit()` tracks the `<form>` element from the last `fillIn`, `selectOption`, `check`, `uncheck`, or `choose` call, then uses this strategy:

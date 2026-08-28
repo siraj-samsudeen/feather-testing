@@ -14,6 +14,22 @@ export interface PlaywrightStepContext {
   scope: Page | Locator;
 }
 
+/**
+ * Playwright matches a bare string name/label/text as a case-insensitive
+ * SUBSTRING. That makes every text-addressed verb ambient: `clickButton('Check')`
+ * also matches an unrelated "Checklist Run — checklist" control that happens to
+ * be on the page, and the run dies on a strict-mode violation whose appearance
+ * depends on what else rendered. When a spec names a control it means *that*
+ * control, so every addressing matcher here passes `exact: true`. Playwright
+ * still normalizes whitespace under exact matching, so multi-line markup and
+ * padded labels keep working.
+ *
+ * Assertions (assertText/refuteText/assertHas) deliberately stay substring:
+ * they ask "does this text appear", and an exact `refuteText` would pass while
+ * the text is plainly on the page inside a longer string.
+ */
+const EXACT = { exact: true } as const;
+
 export class PlaywrightDriver implements TestDriver<PlaywrightStepContext> {
   private lastFormLocator: Locator | null = null;
 
@@ -27,26 +43,29 @@ export class PlaywrightDriver implements TestDriver<PlaywrightStepContext> {
   }
 
   async click(text: string): Promise<void> {
-    await this.scope.getByText(text).click();
+    await this.scope.getByText(text, EXACT).click();
   }
 
   async clickLink(text: string): Promise<void> {
-    await this.scope.getByRole("link", { name: text }).click();
+    await this.scope.getByRole("link", { name: text, ...EXACT }).click();
   }
 
   async clickButton(text: string): Promise<void> {
-    await this.scope.getByRole("button", { name: text }).click();
+    await this.scope.getByRole("button", { name: text, ...EXACT }).click();
+  }
+
+  /** The single label-addressed lookup: every labelled verb goes through it. */
+  private labelled(label: string): Locator {
+    return this.scope.getByLabel(label, EXACT);
   }
 
   private fieldByLabelOrPlaceholder(label: string): Locator {
     // .or() lets Playwright auto-wait on whichever appears, so
     // async-rendered labeled fields don't fall through to the
-    // placeholder branch. Placeholder matching is exact — substring
+    // placeholder branch. Both branches match exactly — substring
     // matching would collide with labels ("Name" vs placeholder
     // "Nickname") and trip strict mode.
-    return this.scope
-      .getByLabel(label)
-      .or(this.scope.getByPlaceholder(label, { exact: true }));
+    return this.labelled(label).or(this.scope.getByPlaceholder(label, EXACT));
   }
 
   async fillIn(label: string, value: string): Promise<void> {
@@ -56,25 +75,25 @@ export class PlaywrightDriver implements TestDriver<PlaywrightStepContext> {
   }
 
   async selectOption(label: string, option: string): Promise<void> {
-    const select = this.scope.getByLabel(label);
+    const select = this.labelled(label);
     await select.selectOption({ label: option });
     this.lastFormLocator = this.scope.locator("form", { has: select });
   }
 
   async check(label: string): Promise<void> {
-    const checkbox = this.scope.getByLabel(label);
+    const checkbox = this.labelled(label);
     await checkbox.check();
     this.lastFormLocator = this.scope.locator("form", { has: checkbox });
   }
 
   async uncheck(label: string): Promise<void> {
-    const checkbox = this.scope.getByLabel(label);
+    const checkbox = this.labelled(label);
     await checkbox.uncheck();
     this.lastFormLocator = this.scope.locator("form", { has: checkbox });
   }
 
   async choose(label: string): Promise<void> {
-    const radio = this.scope.getByRole("radio", { name: label });
+    const radio = this.scope.getByRole("radio", { name: label, ...EXACT });
     await radio.check();
     this.lastFormLocator = this.scope.locator("form", { has: radio });
   }
@@ -110,7 +129,7 @@ export class PlaywrightDriver implements TestDriver<PlaywrightStepContext> {
   }
 
   async upload(label: string, path: string): Promise<void> {
-    const input = this.scope.getByLabel(label);
+    const input = this.labelled(label);
     await input.setInputFiles(path);
     this.lastFormLocator = this.scope.locator("form", { has: input });
   }
@@ -169,20 +188,20 @@ export class PlaywrightDriver implements TestDriver<PlaywrightStepContext> {
   }
 
   async assertChecked(label: string): Promise<void> {
-    await expect(this.scope.getByLabel(label)).toBeChecked();
+    await expect(this.labelled(label)).toBeChecked();
   }
 
   async refuteChecked(label: string): Promise<void> {
-    await expect(this.scope.getByLabel(label)).not.toBeChecked();
+    await expect(this.labelled(label)).not.toBeChecked();
   }
 
   async assertSelected(label: string, optionLabel: string): Promise<void> {
-    const select = this.scope.getByLabel(label);
+    const select = this.labelled(label);
     await expect(select.locator("option:checked")).toHaveText(optionLabel);
   }
 
   async assertOptions(label: string, optionLabels: string[]): Promise<void> {
-    const select = this.scope.getByLabel(label);
+    const select = this.labelled(label);
     await expect(select.locator("option")).toHaveText(optionLabels);
   }
 

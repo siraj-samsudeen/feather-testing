@@ -648,3 +648,70 @@ describe("RTLDriver", () => {
     });
   });
 });
+
+// Mirrors tests/playwright's /collision page: a navigation chip whose
+// accessible name merely CONTAINS the name of the control the spec wants.
+function CollisionApp() {
+  const [msg, setMsg] = useState("");
+  return (
+    <div>
+      <nav className="sidebar">
+        <button>Checklist Run — checklist</button>
+        <a href="/about">About the checklist</a>
+      </nav>
+      <main>
+        <form>
+          <label htmlFor="company">Name of company</label>
+          <input id="company" name="company" />
+
+          <label htmlFor="who">Name</label>
+          <input id="who" name="who" />
+        </form>
+        <button onClick={() => setMsg("Checked!")}>Check</button>
+        <a href="/about">About</a>
+        <p>{msg}</p>
+      </main>
+    </div>
+  );
+}
+
+/**
+ * The RTL adapter addresses controls exactly already — RTL's string matchers
+ * are whole-string by default. These pin that guarantee so the two adapters
+ * keep answering the same question: the Playwright driver had to be taught
+ * `exact: true` after `clickButton('Check')` matched a "Checklist Run —
+ * checklist" chip too and tripped strict mode.
+ */
+describe("RTLDriver — exact addressing", () => {
+  it("clickButton picks the exactly-named button over a longer-named one", async () => {
+    render(<CollisionApp />);
+    const driver = new RTLDriver();
+    await driver.clickButton("Check");
+    await driver.assertText("Checked!");
+  });
+
+  it("clickButton fails when no button matches exactly", async () => {
+    render(<CollisionApp />);
+    const driver = new RTLDriver();
+    // "Chec" is a substring of both buttons and the exact name of neither.
+    await expect(driver.clickButton("Chec")).rejects.toThrow();
+  });
+
+  it("clickLink picks the exactly-named link", async () => {
+    render(<CollisionApp />);
+    const driver = new RTLDriver();
+    await driver.clickLink("About");
+  });
+
+  it("fillIn picks the exactly-labelled field", async () => {
+    render(<CollisionApp />);
+    const driver = new RTLDriver();
+    await driver.fillIn("Name", "Alice");
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe(
+      "Alice",
+    );
+    expect(
+      (screen.getByLabelText("Name of company") as HTMLInputElement).value,
+    ).toBe("");
+  });
+});
