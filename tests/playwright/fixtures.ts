@@ -143,6 +143,30 @@ export const pages: Record<string, string> = {
   <span class="empty"></span>
 </body></html>`,
 
+  // Reproduces the real-world collision: a navigation chip whose accessible
+  // name merely CONTAINS the name of the control the spec wants. Decoys come
+  // first in DOM order so a substring matcher can't land on the right element
+  // by luck.
+  "/collision": `<!DOCTYPE html>
+<html><body>
+  <nav class="sidebar">
+    <button title="Checklist Run — checklist">Checklist Run — checklist</button>
+    <a href="/about">About the checklist</a>
+  </nav>
+  <main>
+    <form>
+      <label for="company">Name of company</label>
+      <input id="company" name="company" />
+
+      <label for="who">Name</label>
+      <input id="who" name="who" />
+    </form>
+    <button onclick="document.getElementById('msg').textContent='Checked!'">Check</button>
+    <a href="/about">About</a>
+    <p id="msg"></p>
+  </main>
+</body></html>`,
+
   "/search": `<!DOCTYPE html>
 <html><body>
   <h1>Search Results</h1>

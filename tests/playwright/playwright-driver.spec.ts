@@ -511,6 +511,90 @@ test.describe("PlaywrightDriver", () => {
   });
 });
 
+/**
+ * Playwright's bare-string name/label/text matchers are case-insensitive
+ * SUBSTRING matchers, so before exact addressing a verb aimed at "Check" also
+ * matched a sidebar chip named "Checklist Run — checklist" and the run died on
+ * a strict-mode violation — visible only when both happened to be on screen,
+ * which made it an ordering-dependent flake rather than an honest failure.
+ */
+test.describe("exact addressing", () => {
+  // Bound the wait for the deliberately-unfindable cases: without it a
+  // missing element burns the whole test timeout before failing.
+  test.use({ actionTimeout: 2000 });
+
+  test("clickButton picks the exactly-named button over a longer-named one", async ({
+    page,
+  }) => {
+    const driver = new PlaywrightDriver(page);
+    await driver.visit("/collision");
+    await driver.clickButton("Check");
+    await expect(page.locator("#msg")).toHaveText("Checked!");
+  });
+
+  test("clickButton fails clearly when no button matches exactly", async ({
+    page,
+  }) => {
+    const driver = new PlaywrightDriver(page);
+    await driver.visit("/collision");
+    // "Chec" is a substring of both buttons and the exact name of neither:
+    // a plain not-found, never a strict-mode violation.
+    const error = await driver.clickButton("Chec").catch((e) => e as Error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain("name: 'Chec', exact: true");
+    expect(error.message).not.toContain("strict mode violation");
+  });
+
+  test("a failed exact lookup still reports the whole chain", async ({
+    page,
+  }) => {
+    const session = new Session(new PlaywrightDriver(page));
+    const error = await session
+      .visit("/collision")
+      .clickButton("Chec")
+      .assertText("Checked!")
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).toContain("[ok] visit('/collision')");
+    expect(error!.message).toContain(">>> [FAILED] clickButton('Chec')");
+    expect(error!.message).toContain("[skipped] assertText('Checked!')");
+  });
+
+  test("clickLink picks the exactly-named link", async ({ page }) => {
+    const driver = new PlaywrightDriver(page);
+    await driver.visit("/collision");
+    await driver.clickLink("About");
+    await expect(page.locator("h1")).toHaveText("About");
+  });
+
+  test("fillIn picks the exactly-labelled field", async ({ page }) => {
+    const driver = new PlaywrightDriver(page);
+    await driver.visit("/collision");
+    await driver.fillIn("Name", "Alice");
+    await expect(page.locator("#who")).toHaveValue("Alice");
+    await expect(page.locator("#company")).toHaveValue("");
+  });
+
+  test("click picks the element whose text matches exactly", async ({
+    page,
+  }) => {
+    const driver = new PlaywrightDriver(page);
+    await driver.visit("/collision");
+    await driver.click("Check");
+    await expect(page.locator("#msg")).toHaveText("Checked!");
+  });
+
+  test("assertText stays a substring check", async ({ page }) => {
+    const driver = new PlaywrightDriver(page);
+    await driver.visit("/collision");
+    // Assertions ask "does this text appear", not "is this the whole name".
+    await driver.assertText("Checklist Run");
+  });
+});
+
 test.describe("Session with PlaywrightDriver", () => {
   test("step() receives the page and scope", async ({ page }) => {
     const session = new Session(new PlaywrightDriver(page));

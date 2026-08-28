@@ -648,3 +648,163 @@ describe("RTLDriver", () => {
     });
   });
 });
+
+// Mirrors tests/playwright's /collision page: a navigation chip whose
+// accessible name merely CONTAINS the name of the control the spec wants.
+function CollisionApp() {
+  const [msg, setMsg] = useState("");
+  return (
+    <div>
+      <nav className="sidebar">
+        <button>Checklist Run — checklist</button>
+        <a href="/about">About the checklist</a>
+      </nav>
+      <main>
+        <form>
+          <label htmlFor="company">Name of company</label>
+          <input id="company" name="company" />
+
+          <label htmlFor="who">Name</label>
+          <input id="who" name="who" />
+        </form>
+        <button onClick={() => setMsg("Checked!")}>Check</button>
+        <a href="/about">About</a>
+        <p>{msg}</p>
+      </main>
+    </div>
+  );
+}
+
+/**
+ * The RTL adapter addresses controls exactly already — RTL's string matchers
+ * are whole-string by default. These pin that guarantee so the two adapters
+ * keep answering the same question: the Playwright driver had to be taught
+ * `exact: true` after `clickButton('Check')` matched a "Checklist Run —
+ * checklist" chip too and tripped strict mode.
+ */
+describe("RTLDriver — exact addressing", () => {
+  it("clickButton picks the exactly-named button over a longer-named one", async () => {
+    render(<CollisionApp />);
+    const driver = new RTLDriver();
+    await driver.clickButton("Check");
+    await driver.assertText("Checked!");
+  });
+
+  it("clickButton fails when no button matches exactly", async () => {
+    render(<CollisionApp />);
+    const driver = new RTLDriver();
+    // "Chec" is a substring of both buttons and the exact name of neither.
+    await expect(driver.clickButton("Chec")).rejects.toThrow();
+  });
+
+  it("clickLink picks the exactly-named link", async () => {
+    render(<CollisionApp />);
+    const driver = new RTLDriver();
+    await driver.clickLink("About");
+  });
+
+  it("fillIn picks the exactly-labelled field", async () => {
+    render(<CollisionApp />);
+    const driver = new RTLDriver();
+    await driver.fillIn("Name", "Alice");
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe(
+      "Alice",
+    );
+    expect(
+      (screen.getByLabelText("Name of company") as HTMLInputElement).value,
+    ).toBe("");
+  });
+});
+
+// Two panels with identical inner markup: a driver scoped to `.main` must
+// resolve `.panel` inside its own scope, not from the top of the document.
+function NestedScopeApp() {
+  return (
+    <div>
+      <div className="sidebar">
+        <div className="panel">
+          <p>Sidebar panel</p>
+        </div>
+      </div>
+      <div className="main">
+        <div className="panel">
+          <p>Main panel</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+describe("RTLDriver — scoping resolves against the current scope", () => {
+  it("within() nests", async () => {
+    render(<NestedScopeApp />);
+    const driver = new RTLDriver();
+
+    const main = await driver.within(".main");
+    const panel = await main.within(".panel");
+
+    await panel.assertText("Main panel");
+    await expect(panel.assertText("Sidebar panel")).rejects.toThrow();
+  });
+
+  it("a driver constructed with a container scopes selector lookups too", async () => {
+    render(<NestedScopeApp />);
+    const mainEl = document.querySelector(".main") as HTMLElement;
+    const driver = new RTLDriver(undefined, mainEl);
+
+    const panel = await driver.within(".panel");
+    await panel.assertText("Main panel");
+  });
+});
+
+// Labels with no htmlFor and no nesting — the control is a sibling inside a
+// wrapper. RTL's own findByLabelText cannot see these, which is exactly the
+// case a host adapter specializes findField() for.
+function WrapperLabelApp() {
+  return (
+    <form>
+      <div>
+        <label>Subject</label>
+        <input name="subject" defaultValue="" />
+      </div>
+    </form>
+  );
+}
+
+class WrapperLabelDriver extends RTLDriver {
+  protected override async findField(label: string): Promise<HTMLElement> {
+    for (const l of Array.from(this.rootElement().querySelectorAll("label"))) {
+      if ((l.textContent ?? "").trim() !== label) continue;
+      const sibling = l.parentElement?.querySelector("input, textarea, select");
+      if (sibling) return sibling as HTMLElement;
+    }
+    throw new Error(`no field labelled '${label}'`);
+  }
+
+  protected override scoped(element: HTMLElement) {
+    return new WrapperLabelDriver(this.user, element, this.timeout);
+  }
+}
+
+describe("RTLDriver — findField() is the seam for a host adapter's markup", () => {
+  it("overriding findField retargets every labelled verb", async () => {
+    render(<WrapperLabelApp />);
+    const stock = new RTLDriver();
+    // The stock lookup genuinely cannot find this control...
+    await expect(stock.fillIn("Subject", "x")).rejects.toThrow();
+
+    // ...and one overridden method is enough to fix fillIn AND the
+    // assertions that never mention findField themselves.
+    const driver = new WrapperLabelDriver();
+    await driver.fillIn("Subject", "Sales mismatch");
+    await driver.assertValue("Subject", "Sales mismatch");
+  });
+
+  it("within() keeps the subclass's lookup", async () => {
+    render(<WrapperLabelApp />);
+    const driver = new WrapperLabelDriver();
+    const scoped = await driver.within("form");
+    await scoped.fillIn("Subject", "scoped");
+    await scoped.assertValue("Subject", "scoped");
+  });
+});

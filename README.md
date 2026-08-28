@@ -172,6 +172,20 @@ Every method returns `this` for chaining. A single `await` at the start of the c
 | `upload(label, path)` | Set a file input (found by label) to the file at `path` |
 | `dropFile(selector, path)` | Dispatch a `DataTransfer` drop of the file onto a drop area |
 
+#### Interactions address controls **exactly**
+
+Every interaction above names the control it wants, and that name is matched in full: `clickButton("Check")` clicks the button named *Check*, never the sidebar chip named *"Checklist Run — checklist"*. Whitespace is still normalized, so multi-line markup and padded labels keep working.
+
+This matters because Playwright's bare-string matchers are case-insensitive *substring* matchers. Left as-is, a verb aimed at one control silently widens to any other control whose name merely contains the same text — and the run dies on a strict-mode violation that only appears when both are on screen at once, which turns a naming collision into an ordering-dependent flake. RTL matches whole strings by default, so with this both adapters answer the same question.
+
+Assertions are the deliberate exception: `assertText` / `refuteText` / `assertHas` ask *"does this text appear"*, so they stay substring matches. An exact `refuteText("Check")` would pass while *Checklist Run* is plainly on the page.
+
+To act on a control whose name is genuinely a prefix of another's, scope the lookup rather than loosening it:
+
+```ts
+await session.within("main", (s) => s.clickButton("Check"));
+```
+
 #### How `submit()` finds the submit button
 
 `submit()` tracks the `<form>` element from the last `fillIn`, `selectOption`, `check`, `uncheck`, or `choose` call, then uses this strategy:
@@ -391,6 +405,36 @@ The RTL adapter runs in JSDOM, which has no real browser. These methods are not 
 - `visit()` — render the component directly instead
 - `assertPath()` / `refutePath()` — no URL in JSDOM
 - `assertHas()` / `refuteHas()` — RTL discourages CSS selectors; use `assertText()` instead
+
+### Extending the RTL adapter
+
+`RTLDriver` is meant to be subclassed when an app's markup needs a different lookup, so that a host harness binds *this* DSL rather than reimplementing it. Everything worth specializing is `protected`:
+
+| Member | Why you'd override it |
+|--------|----------------------|
+| `findField(label)` | The single label-addressed lookup. Every labelled verb — `fillIn`, `selectOption`, `check`, `uncheck`, `upload`, `assertValue`, `assertChecked`, `assertSelected`, `assertOptions` — goes through it, so one override retargets them all |
+| `scoped(element)` | Factory used by `within()`, so a scoped session keeps your driver's behaviour |
+| `user`, `root`, `container`, `lastFormElement`, `timeout` | Shared state the built-in verbs read and write |
+
+```ts
+class WrapperLabelDriver extends RTLDriver {
+  // Labels with no htmlFor, control is a sibling inside a wrapper div
+  protected override async findField(label: string): Promise<HTMLElement> {
+    for (const l of this.rootElement().querySelectorAll("label")) {
+      if (l.textContent?.trim() !== label) continue;
+      const control = l.parentElement?.querySelector("input, textarea, select");
+      if (control) return control as HTMLElement;
+    }
+    throw new Error(`no field labelled '${label}'`);
+  }
+
+  protected override scoped(element: HTMLElement) {
+    return new WrapperLabelDriver(this.user, element, this.timeout);
+  }
+}
+```
+
+The third constructor argument is a per-lookup timeout in ms; omit it to keep RTL's own default.
 
 ## Exports
 

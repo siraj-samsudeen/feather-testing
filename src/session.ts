@@ -206,9 +206,14 @@ export class Session<TContext = unknown> implements PromiseLike<void> {
 
   // --- Scoping ---
 
+  /**
+   * `fn` must either return the scoped session — so its queued steps run — or
+   * a promise it already awaited. Returning anything else would silently drop
+   * the scoped chain, which is why the callback's return type is not `unknown`.
+   */
   within(
     selector: string,
-    fn: (scoped: Session<TContext>) => Session<TContext>,
+    fn: (scoped: Session<TContext>) => Session<TContext> | PromiseLike<unknown>,
   ): this {
     return this.enqueue(`within('${selector}')`, async () => {
       const scopedDriver = await this.driver.within(selector);
